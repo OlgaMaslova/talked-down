@@ -105,6 +105,13 @@ body {
   line-height: 1.25;
 }
 
+.player-brief {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
 .meters {
   display: flex;
   align-items: center;

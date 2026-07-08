@@ -110,8 +110,8 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   transcript.push({ role: "player", message: playerMessage });
   transcript.push({ role: "actor", message: actor.reply, action: action, offer: actor.offer, mood: actor.mood });
 
-  session.set("transcript", transcript);
-  session.set("state", state);
+  session.set("transcript", JSON.stringify(transcript));
+  session.set("state", JSON.stringify(state));
   session.set("status", status);
   e.app.save(session);
 

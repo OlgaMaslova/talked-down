@@ -64,6 +64,14 @@ function clamp(value, min, max) {
 }
 
 function getJSONField(record, fieldName, fallback) {
+  // Prefer the raw string form: PocketBase JSON fields round-trip reliably
+  // as JSON strings, while goja-wrapped objects can fail save validation.
+  try {
+    var raw = record.getString(fieldName);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (errRaw) {}
   var value = record.get(fieldName);
   if (value === null || typeof value === "undefined" || value === "") {
     return fallback;
@@ -129,9 +137,9 @@ function newSessionRecord(app, scenario, spec) {
   record.set("scenario", scenario.id);
   record.set("token", token);
   record.set("status", "active");
-  record.set("transcript", []);
-  record.set("state", state);
-  record.set("agreement", null);
+  record.set("transcript", "[]");
+  record.set("state", JSON.stringify(state));
+  record.set("agreement", "null");
   app.save(record);
 
   return { record: record, token: token, state: state };
@@ -143,6 +151,7 @@ function publicScenarioPayload(scenario, spec, state) {
     character_name: scenario.getString("character_name"),
     character_persona: scenario.getString("character_persona"),
     opening_message: scenario.getString("opening_message"),
+    player_brief: scenario.getString("player_brief") || null,
     currency: spec.currency || null,
     patience: state.patience,
     max_turns: intOrDefault(spec.max_turns, 10),
@@ -294,12 +303,12 @@ function runNotaryBestEffort(sessionRecord, transcript) {
     if (!agreement || typeof agreement !== "object") {
       return;
     }
-    sessionRecord.set("agreement", {
+    sessionRecord.set("agreement", JSON.stringify({
       deal: !!agreement.deal,
       price: numberOrNull(agreement.price),
       terms: safeArray(agreement.terms),
       summary: String(agreement.summary || ""),
-    });
+    }));
     $app.save(sessionRecord);
   } catch (err) {
     // Best effort only: notary extraction must never break the turn response.

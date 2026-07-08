@@ -129,6 +129,12 @@ function trimString(value) {
 }
 
 function getJSONField(record, fieldName, fallback) {
+  try {
+    var raw = record.getString(fieldName);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (errRaw) {}
   var value = record.get(fieldName);
   if (value === null || typeof value === "undefined" || value === "") {
     return fallback;
@@ -187,7 +193,8 @@ function scenarioPublicPayload(record) {
     title: record.getString("title"),
     character_name: record.getString("character_name"),
     character_persona: record.getString("character_persona"),
-    opening_message: record.getString("opening_message")
+    opening_message: record.getString("opening_message"),
+    player_brief: record.getString("player_brief")
   };
 }
 
@@ -239,10 +246,11 @@ function generatedScenarioSystemPrompt() {
     "Levers must rotate and sometimes INVERT expectations: e.g. character punishes flattery, wastes messages, respects bluntness, rewards silence/walkaway, or dislikes over-empathy. Never reuse the same solution.",
     "You may theme around season, holidays, or big cultural moments, but ONLY through archetypes such as 'the superstar striker on the eve of the final'. Never name real people, brands, franchises, teams, leagues, trademarked events, or copyrighted settings.",
     "Hidden parameters must explain how concessions are earned, what warms the character up, and what makes them walk away.",
+    "public.player_brief is REQUIRED: 2-3 sentences addressed to the player stating (1) who the player is in this story, (2) exactly what is being negotiated (the item/stakes), and (3) the player's goal. For price scenarios it MUST name the currency and the character's public opening ask number, which must equal secret.opening_price. For non_price scenarios it must state clearly what the player is trying to persuade the character to do. It must contain ZERO lever hints (no behavior/temperament/what-works-on-them clues).",
     "public.character_persona must be a SHORT NEUTRAL surface description only: identity, age, role, appearance, setting (e.g. 'a middle-aged Polish market vendor'). It must contain ZERO hints about behavior, temperament, likes/dislikes, patience, what works on them, or negotiation style — all of that belongs ONLY in secret.levers and secret.actor_notes. If a phrase would help a player guess a lever ('no patience for flattery', 'respects bluntness'), it must NOT appear in any public field.",
-    "Return JSON only with this exact top-level shape: {\"public\":{\"title\":string,\"character_name\":string,\"character_persona\":string,\"opening_message\":string},\"secret\":{\"frame\":\"buy\"|\"sell\"|\"defend\"|\"multi_issue\"|\"non_price\",\"direction\":\"buy\"|\"sell\"|null,\"item\":string,\"objective\":string,\"currency\":string|null,\"opening_price\":number|null,\"floor_price\":number|null,\"fair_price\":number|null,\"patience\":integer,\"max_turns\":integer,\"levers\":{\"rewards\":string[],\"punishes\":string[]},\"concession_style\":string,\"actor_notes\":string,\"scoring_config\":{\"max_score\":100,\"price_weight\":number,\"patience_weight\":number,\"turns_weight\":number}}}.",
+    "Return JSON only with this exact top-level shape: {\"public\":{\"title\":string,\"character_name\":string,\"character_persona\":string,\"opening_message\":string,\"player_brief\":string},\"secret\":{\"frame\":\"buy\"|\"sell\"|\"defend\"|\"multi_issue\"|\"non_price\",\"direction\":\"buy\"|\"sell\"|null,\"item\":string,\"objective\":string,\"currency\":string|null,\"opening_price\":number|null,\"floor_price\":number|null,\"fair_price\":number|null,\"patience\":integer,\"max_turns\":integer,\"levers\":{\"rewards\":string[],\"punishes\":string[]},\"concession_style\":string,\"actor_notes\":string,\"scoring_config\":{\"max_score\":100,\"price_weight\":number,\"patience_weight\":number,\"turns_weight\":number}}}.",
     "For price scenarios: use positive numeric prices. If direction='sell', require 0 < floor_price <= fair_price <= opening_price. If direction='buy', require 0 < opening_price <= fair_price <= floor_price. For non_price, use null currency/opening_price/floor_price/fair_price and direction=null.",
-    "Keep public fields concise: title <=160 chars, character_name <=80, character_persona <=200, opening_message <=1000."
+    "Keep public fields concise: title <=160 chars, character_name <=80, character_persona <=200, opening_message <=1000, player_brief <=400."
   ].join("\n");
 }
 
@@ -293,6 +301,7 @@ function normalizeAndValidateGenerated(raw, recent) {
   pub.character_name = trimString(pub.character_name);
   pub.character_persona = trimString(pub.character_persona);
   pub.opening_message = trimString(pub.opening_message);
+  pub.player_brief = trimString(pub.player_brief);
 
   if (!pub.title) { errors.push("public.title required"); }
   if (!pub.character_name) { errors.push("public.character_name required"); }
@@ -309,8 +318,16 @@ function normalizeAndValidateGenerated(raw, recent) {
     }
   }
   if (pub.opening_message.length > 1000) { errors.push("public.opening_message too long"); }
+  if (!pub.player_brief) { errors.push("public.player_brief required"); }
+  if (pub.player_brief.length > 400) { errors.push("public.player_brief too long"); }
+  for (var bt = 0; bt < leverTellPatterns.length; bt++) {
+    if (leverTellPatterns[bt].test(pub.player_brief)) {
+      errors.push("public.player_brief contains a behavioral hint; brief must only state role, stakes, and goal");
+      break;
+    }
+  }
 
-  var publicText = [pub.title, pub.character_name, pub.character_persona, pub.opening_message].join("\n");
+  var publicText = [pub.title, pub.character_name, pub.character_persona, pub.opening_message, pub.player_brief].join("\n");
   var banned = containsBannedNamedReference(publicText + "\n" + JSON.stringify(secret || {}));
   if (banned) {
     errors.push("banned named real/trademarked reference: " + banned);
@@ -382,6 +399,12 @@ function normalizeAndValidateGenerated(raw, recent) {
       if (!(secret.opening_price <= secret.fair_price && secret.fair_price <= secret.floor_price)) {
         errors.push("buy-side sanity requires opening <= fair <= floor(max)");
       }
+    }
+  }
+
+  if (secret.frame !== "non_price" && numberOrNull(secret.opening_price) !== null) {
+    if (!containsNumericValue(pub.player_brief, secret.opening_price)) {
+      errors.push("public.player_brief must state the character's opening ask number for price scenarios");
     }
   }
 
@@ -459,8 +482,9 @@ function createDraftScenario(app, targetDate, generated) {
   scenario.set("character_name", generated.public.character_name);
   scenario.set("character_persona", generated.public.character_persona);
   scenario.set("opening_message", generated.public.opening_message);
-  scenario.set("engine_config", {});
-  scenario.set("scoring_config", {});
+  scenario.set("player_brief", generated.public.player_brief || "");
+  scenario.set("engine_config", "{}");
+  scenario.set("scoring_config", "{}");
   scenario.set("scenario_date", targetDate);
   scenario.set("status", "draft");
   scenario.set("generator", PLAYWRIGHT_GENERATOR);
@@ -469,8 +493,8 @@ function createDraftScenario(app, targetDate, generated) {
   var secretsCollection = app.findCollectionByNameOrId("scenario_secrets");
   var secretRecord = new Record(secretsCollection);
   secretRecord.set("scenario", scenario.id);
-  secretRecord.set("secret_spec", generated.secret);
-  secretRecord.set("security_report", { passed: false, attempts: 0, findings: [] });
+  secretRecord.set("secret_spec", JSON.stringify(generated.secret));
+  secretRecord.set("security_report", JSON.stringify({ passed: false, attempts: 0, findings: [] }));
   app.save(secretRecord);
 
   return { scenario: scenario, secretRecord: secretRecord };
@@ -784,11 +808,11 @@ function runSecurityTest(app, scenario, spec, cycle) {
 }
 
 function saveSecurityReport(app, secretRecord, report) {
-  secretRecord.set("security_report", {
+  secretRecord.set("security_report", JSON.stringify({
     passed: !!report.passed,
     attempts: report.attempts,
     findings: safeArray(report.findings)
-  });
+  }));
   app.save(secretRecord);
 }
 

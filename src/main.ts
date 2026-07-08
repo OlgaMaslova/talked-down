@@ -21,6 +21,7 @@ interface LlmScenario {
   character_name: string;
   character_persona: string;
   opening_message: string;
+  player_brief?: string | null;
   currency: string;
   patience: number;
   max_turns: number;
@@ -250,6 +251,7 @@ interface GameContext {
   title: string;
   characterName: string;
   characterPersona: string;
+  playerBrief?: string | null;
   openingMessage: string;
   currency: string;
   maxPatience: number;
@@ -273,6 +275,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           <span class="char-name">${escapeHtml(ctx.characterName)}</span>
           <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
         </div>
+        ${ctx.playerBrief ? `<p class="player-brief">${escapeHtml(ctx.playerBrief)}</p>` : ''}
         <div class="meters">
           <div>
             <span class="patience-label">Patience</span>
@@ -487,6 +490,7 @@ function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: num
     title: scenario.title,
     characterName: scenario.character_name,
     characterPersona: scenario.character_persona,
+    playerBrief: scenario.player_brief ?? null,
     openingMessage: scenario.opening_message,
     currency: scenario.currency,
     maxPatience: scenario.patience,
