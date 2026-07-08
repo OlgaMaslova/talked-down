@@ -13,11 +13,6 @@ cronAdd("nightly_playwright", "0 2 * * *", function() {
 
 routerAdd("POST", "/api/admin/run-playwright", function(e) {
   var playwright = require(__hooks + "/lib/playwright.js");
-  var adminKey = playwright.env("PLAYWRIGHT_ADMIN_KEY");
-  var provided = playwright.getHeader(e, "X-Admin-Key");
-  if (!adminKey || provided !== adminKey) {
-    return e.json(404, { error: "not_found" });
-  }
 
   var body = playwright.getBody(e);
   var targetDate = body && body.date ? String(body.date) : playwright.tomorrowUTC();
@@ -32,4 +27,4 @@ routerAdd("POST", "/api/admin/run-playwright", function(e) {
     playwright.logError(e.app, "manual playwright route failed for " + targetDate + ": " + err.message);
     return e.json(500, { error: "playwright_failed", message: err.message });
   }
-});
+}, $apis.requireSuperuserAuth());
