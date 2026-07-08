@@ -301,7 +301,7 @@ interface GameContext {
   engine: NegotiationEngine;
   initialTurn: CharacterTurn;
   scoreTurn: (turn: CharacterTurn) => ScoreResult;
-  recordScore: (score: number, label: string, turn: CharacterTurn) => void;
+  recordScore: (score: number, label: string, turn: CharacterTurn) => Promise<void>;
 }
 
 function renderGame(root: HTMLElement, ctx: GameContext): void {
@@ -377,7 +377,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     const outcome: 'deal' | 'no_deal' = turn.outcome === 'deal' ? 'deal' : 'no_deal';
     const { score, label } = ctx.scoreTurn(turn);
 
-    ctx.recordScore(score, label, turn);
+    const scoreSaved = ctx.recordScore(score, label, turn);
 
     endPanel.classList.remove('hidden');
     endPanel.innerHTML = `
@@ -436,7 +436,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     const percentileEl = endPanel.querySelector<HTMLElement>('#end-percentile');
     if (percentileEl) {
       percentileEl.textContent = 'Checking today\u2019s standings…';
-      void fetchPercentile(ctx.dayNumber, score).then((p) => {
+      void scoreSaved.then(() => fetchPercentile(ctx.dayNumber, score)).then((p) => {
         if (!p) {
           percentileEl.textContent = '';
           return;
@@ -449,7 +449,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     // Play history for this device's silent identity.
     const historyBox = endPanel.querySelector<HTMLElement>('#history-box');
     if (historyBox) {
-      void fetchHistory(ctx.identity.deviceId).then((items) => {
+      void scoreSaved.then(() => fetchHistory(ctx.identity.deviceId)).then((items) => {
         if (items.length === 0) return;
         const rows = items
           .map((h) => {
@@ -536,9 +536,8 @@ async function loadRuleEngineGame(root: HTMLElement, dayNumber: number): Promise
     engine,
     initialTurn,
     scoreTurn: (turn) => computeScore(scoringConfig, config, turn.dealPrice, turn.state.turns, turn.state.patience),
-    recordScore: (score, label, turn) => {
-      void submitScore(scenario.day_index, dayNumber, identity, score, turn.state.turns, label, scenario.id);
-    },
+    recordScore: (score, label, turn) =>
+      submitScore(scenario.day_index, dayNumber, identity, score, turn.state.turns, label, scenario.id),
   });
 }
 
@@ -570,9 +569,8 @@ function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: num
     engine,
     initialTurn,
     scoreTurn: (turn) => computeLlmScore(turn, scenario.patience, scenario.max_turns),
-    recordScore: (score, label, turn) => {
-      void submitScore(dayNumber, dayNumber, identity, score, turn.state.turns, label);
-    },
+    recordScore: (score, label, turn) =>
+      submitScore(dayNumber, dayNumber, identity, score, turn.state.turns, label),
   });
 }
 
