@@ -88,7 +88,7 @@ routerAdd("POST", "/api/claim/start", (e) => {
     return jsonError(500, "claim_unavailable");
   }
 
-  var link = "https://talked-down-app.supernaut.to/?claim_token=" + encodeURIComponent(token);
+  var link = "https://talkeddown.com/?claim_token=" + encodeURIComponent(token);
   var payload = {
     to: [email],
     subject: "Claim your Talked Down handle",
