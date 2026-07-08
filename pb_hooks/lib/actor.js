@@ -193,12 +193,35 @@ function newSessionRecord(app, scenario, spec, identity) {
   return { record: record, token: token, state: state };
 }
 
+function sanitizeOpeningMessage(text) {
+  text = String(text || "").trim();
+  if (!text) { return text; }
+  var quoteRe = /["\u201C]([^"\u201C\u201D]+)["\u201D]/g;
+  var parts = [];
+  var outside = text.replace(quoteRe, "");
+  var m;
+  while ((m = quoteRe.exec(text)) !== null) {
+    var q = (m[1] || "").trim();
+    if (q) { parts.push(q); }
+  }
+  // Only strip narration when there IS quoted speech plus prose outside the quotes.
+  if (parts.length && outside.replace(/[\s.,;:!?\u2014-]/g, "").length > 0) {
+    var joined = parts.join(" ").trim();
+    if (joined.length >= 8) { return joined; }
+  }
+  // Pure quoted speech with nothing outside: unwrap the quotes.
+  if (parts.length === 1 && outside.replace(/[\s]/g, "").length === 0) {
+    return parts[0];
+  }
+  return text;
+}
+
 function publicScenarioPayload(scenario, spec, state) {
   return {
     title: scenario.getString("title"),
     character_name: scenario.getString("character_name"),
     character_persona: scenario.getString("character_persona"),
-    opening_message: scenario.getString("opening_message"),
+    opening_message: sanitizeOpeningMessage(scenario.getString("opening_message")),
     player_brief: scenario.getString("player_brief") || null,
     currency: spec.currency || null,
     patience: state.patience,
@@ -246,7 +269,7 @@ function buildActorMessages(scenario, spec, state, transcript, playerMessage) {
     title: scenario.getString("title"),
     character_name: scenario.getString("character_name"),
     character_persona: scenario.getString("character_persona"),
-    opening_message: scenario.getString("opening_message"),
+    opening_message: sanitizeOpeningMessage(scenario.getString("opening_message")),
     frame: spec.frame || null,
     direction: direction,
     item: spec.item || null,
