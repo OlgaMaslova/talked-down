@@ -112,6 +112,10 @@ body {
   line-height: 1.4;
 }
 
+.meters:not(:has(*)) {
+  display: none;
+}
+
 .meters {
   display: flex;
   align-items: center;
@@ -479,6 +483,10 @@ body {
 
   .meters {
     margin-top: auto;
+  }
+
+  .day-badge {
+    align-self: flex-start;
   }
 
   .chat-log {
