@@ -115,3 +115,11 @@ A change is not done until the real data path works on the deployed backend.
 - After deleting, re-fetch or list the record to confirm it is actually gone; do not assume a 200/204 response means the delete took effect.
 
 Add future project-specific rules to this file.
+
+## Frontend hosting
+
+- Production frontend assets are deployed with Supernaut's Cloudflare static Worker/custom-domain flow.
+- Build frontend assets into `public/`; do not rely on PocketBase serving the production frontend.
+- Browser code must call the Fly.io PocketBase API URL explicitly through `VITE_POCKETBASE_URL`; do not assume same-origin API requests.
+- Do not mention PocketBase in user-facing frontend or landing page copy; it is an internal implementation tool.
+- Do not add user-facing links, buttons, or navigation to the PocketBase admin UI.
