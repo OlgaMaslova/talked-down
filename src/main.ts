@@ -694,19 +694,22 @@ async function main(): Promise<void> {
   root.innerHTML = '<div class="loading">Loading today\u2019s negotiation…</div>';
 
   const dayNumber = getDayNumber();
-  const identity = getIdentity();
 
-  // If this load carries a claim magic-link token, verify it against this
-  // device up front (fire-and-forget: it only manages its own banner and
-  // the URL bar, independent of the game screen rendered below).
-  void consumeClaimTokenFromUrl(identity.deviceId).then((result) => {
-    if (!result) return;
-    if (result.ok) {
-      showBanner(`✅ Handle claimed: ${result.handle}`, 'success');
+  // If this load carries a claim magic-link token, verify it BEFORE starting
+  // the game session: verification may adopt the claimed identity into local
+  // storage, and the session must start as that identity (otherwise a fresh
+  // device id + handle gets minted and the player "becomes someone else").
+  const claimResult = await consumeClaimTokenFromUrl(getIdentity().deviceId);
+  if (claimResult) {
+    if (claimResult.ok) {
+      showBanner(`✅ Handle claimed: ${claimResult.handle}`, 'success');
     } else {
       showBanner('That link expired — request a new one from your result screen.', 'error');
     }
-  });
+  }
+
+  // Re-read identity: claim verification may have adopted the claimed one.
+  const identity = getIdentity();
 
   const session = await startBackendSession(identity);
   if (session && session.llm === true) {

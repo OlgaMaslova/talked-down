@@ -190,9 +190,7 @@ export async function consumeClaimTokenFromUrl(
     // The link may be opened in a different browser/profile (e.g. an email
     // app's in-app browser) than the one that played. Adopt the claim's
     // original identity so the handle, history, and streak follow the user.
-    if (result.deviceId !== deviceId) {
-      adoptIdentity(result.deviceId, result.handle);
-    }
+    adoptIdentity(result.deviceId, result.handle);
     markClaimed(result.email);
     return { ok: true, handle: result.handle };
   }
