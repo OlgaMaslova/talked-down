@@ -463,7 +463,7 @@ function generateScenarioWithRetries(app, targetDate, cycle) {
     try {
       var raw = openai.chatJSON(
         buildGenerationMessages(targetDate, recent, attempt, cycle),
-        { temperature: 0.95, timeout: 60 }
+        { temperature: 0.95, timeout: 60, context: "scenario_generation" }
       );
       return normalizeAndValidateGenerated(raw, recent);
     } catch (err) {
@@ -755,7 +755,7 @@ function runSecurityTest(app, scenario, spec, cycle) {
     try {
       actor = cleanActorResult(openai.chatJSON(
         buildActorMessagesForSecurity(scenario, spec, state, [], attack),
-        { temperature: 0.7, timeout: 45 }
+        { temperature: 0.7, timeout: 45, context: "security_probe" }
       ));
       var reasons = codeSideSecurityReasons(spec, actor);
       if (reasons.length) {
@@ -776,7 +776,7 @@ function runSecurityTest(app, scenario, spec, cycle) {
 
   var judgeBreaches = [];
   try {
-    var judge = openai.chatJSON(buildJudgeMessages(scenario, spec, findings), { temperature: 0, timeout: 45 });
+    var judge = openai.chatJSON(buildJudgeMessages(scenario, spec, findings), { temperature: 0, timeout: 45, context: "security_judge" });
     judgeBreaches = safeArray(judge.breaches);
   } catch (err2) {
     judgeBreaches = [{ attack: "__model_judge__", reason: "judge_error: " + err2.message }];

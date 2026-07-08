@@ -299,7 +299,7 @@ function buildNotaryMessages(transcript) {
 
 function runNotaryBestEffort(sessionRecord, transcript) {
   try {
-    var agreement = openai.chatJSON(buildNotaryMessages(transcript), { temperature: 0 });
+    var agreement = openai.chatJSON(buildNotaryMessages(transcript), { temperature: 0, context: "notary" });
     if (!agreement || typeof agreement !== "object") {
       return;
     }

@@ -33,6 +33,45 @@ function responseBodyToString(res) {
   return toString(res.body);
 }
 
+// USD per 1M tokens: [input, output]. Unknown models log tokens with cost 0.
+var PRICING_PER_MTOK = {
+  "gpt-4.1": [2.0, 8.0],
+  "gpt-4.1-mini": [0.4, 1.6],
+  "gpt-4.1-nano": [0.1, 0.4],
+  "gpt-4o": [2.5, 10.0],
+  "gpt-4o-mini": [0.15, 0.6],
+};
+
+function computeCostUSD(model, promptTokens, completionTokens) {
+  var rates = PRICING_PER_MTOK[model];
+  if (!rates) {
+    return 0;
+  }
+  return (promptTokens * rates[0] + completionTokens * rates[1]) / 1000000;
+}
+
+function traceUsage(entry) {
+  // Best effort: tracing must never break the LLM call path.
+  try {
+    var collection = $app.findCollectionByNameOrId("llm_usage");
+    var record = new Record(collection);
+    record.set("model", entry.model || "");
+    record.set("context", entry.context || "");
+    record.set("prompt_tokens", entry.promptTokens || 0);
+    record.set("completion_tokens", entry.completionTokens || 0);
+    record.set("total_tokens", (entry.promptTokens || 0) + (entry.completionTokens || 0));
+    record.set("cost_usd", computeCostUSD(entry.model, entry.promptTokens || 0, entry.completionTokens || 0));
+    record.set("duration_ms", entry.durationMs || 0);
+    record.set("status", entry.error ? "error" : "ok");
+    record.set("error", entry.error ? String(entry.error).slice(0, 500) : "");
+    $app.save(record);
+  } catch (err) {
+    try {
+      console.log("llm_usage_trace_failed: " + err.message);
+    } catch (ignored) {}
+  }
+}
+
 function chatJSON(messages, opts) {
   opts = opts || {};
 
@@ -52,6 +91,7 @@ function chatJSON(messages, opts) {
     payload.temperature = opts.temperature;
   }
 
+  var startedAt = Date.now();
   var res;
   try {
     res = $http.send({
@@ -65,8 +105,10 @@ function chatJSON(messages, opts) {
       timeout: opts.timeout || 30,
     });
   } catch (err) {
+    traceUsage({ model: model, context: opts.context, durationMs: Date.now() - startedAt, error: err.message });
     throw new Error("OpenAI request failed: " + err.message);
   }
+  var durationMs = Date.now() - startedAt;
 
   var statusCode = res && (res.statusCode || res.status);
   var rawBody = responseBodyToString(res);
@@ -80,10 +122,19 @@ function chatJSON(messages, opts) {
         detail = errorBody.error.message;
       }
     } catch (err) {}
+    traceUsage({ model: model, context: opts.context, durationMs: durationMs, error: "status " + statusCode + ": " + detail });
     throw new Error("OpenAI request failed with status " + statusCode + ": " + detail);
   }
 
   var data = parsedBody || parseJSON(rawBody, "OpenAI response");
+  var usage = data && data.usage ? data.usage : {};
+  traceUsage({
+    model: (data && data.model) || model,
+    context: opts.context,
+    promptTokens: usage.prompt_tokens || 0,
+    completionTokens: usage.completion_tokens || 0,
+    durationMs: durationMs,
+  });
   if (!data.choices || !data.choices.length || !data.choices[0].message) {
     throw new Error("OpenAI response missing choices[0].message");
   }

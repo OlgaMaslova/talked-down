@@ -63,7 +63,7 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   try {
     actor = actorLib.cleanActorResult(actorLib.chatJSON(
       actorLib.buildActorMessages(scenario, spec, state, transcript, playerMessage),
-      { temperature: 0.7 }
+      { temperature: 0.7, context: "actor_turn" }
     ));
   } catch (err) {
     console.log("actor_unavailable: " + err.message);
