@@ -1,0 +1,54 @@
+# Talked Down — nightly pipeline watchdog.
+#
+# The nightly generate/test/publish/recap pipeline runs server-side on the
+# PocketBase backend (cron "nightly_playwright", 02:00 UTC): it recaps the
+# prior day, generates tomorrow's scenario, security-tests it, and publishes.
+#
+# This workflow only VERIFIES that run via the public /api/pipeline/status
+# endpoint and alerts on breakage. Breakage-only alerting: on success it does
+# nothing and sends nothing; on failure it opens (or comments on) a GitHub
+# issue assigned to the repo owner (Olga), which triggers a notification.
+name: nightly-watchdog
+
+on:
+  schedule:
+    - cron: "30 3 * * *" # 90 min after the 02:00 UTC pipeline run
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check pipeline status
+        id: status
+        run: |
+          set -euo pipefail
+          BODY=$(curl -sS --max-time 30 https://sn-pb-repo-1292607600-93600e.fly.dev/api/pipeline/status || echo '{"ok":false,"error":"unreachable"}')
+          echo "body=$BODY" >> "$GITHUB_OUTPUT"
+          echo "Pipeline status: $BODY"
+          OK=$(echo "$BODY" | jq -r '.ok // false')
+          TODAY_READY=$(echo "$BODY" | jq -r '.today_scenario_ready // false')
+          if [ "$OK" != "true" ] || [ "$TODAY_READY" != "true" ]; then
+            echo "Nightly pipeline breakage detected" >&2
+            exit 1
+          fi
+
+      - name: Alert on breakage (issue for Olga)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS_BODY: ${{ steps.status.outputs.body }}
+        run: |
+          set -euo pipefail
+          TITLE="🚨 Nightly pipeline breakage — Talked Down"
+          BODY=$(printf 'The nightly generate/test/publish/recap pipeline watchdog failed.\n\nStatus endpoint response:\n```json\n%s\n```\n\nRun: %s/%s/actions/runs/%s\n\ncc @%s' "${STATUS_BODY:-<no response>}" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "${GITHUB_REPOSITORY_OWNER}")
+          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title Nightly pipeline breakage" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY" --assignee "$GITHUB_REPOSITORY_OWNER"
+          fi
