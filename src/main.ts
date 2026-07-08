@@ -1,7 +1,8 @@
 import './styles.css';
-import { pb } from './pocketbase';
-import { createRuleEngine, type CharacterTurn, type EngineConfig } from './engine';
-import { computeScore, type ScoringConfig } from './scoring';
+import { pb, apiBaseUrl } from './pocketbase';
+import { createRuleEngine, type CharacterTurn, type CharacterTurnState, type EngineConfig, type NegotiationEngine } from './engine';
+import { createLlmEngine } from './llmEngine';
+import { computeScore, type ScoringConfig, type ScoreResult } from './scoring';
 
 interface ScenarioRecord {
   id: string;
@@ -13,6 +14,30 @@ interface ScenarioRecord {
   engine_config: EngineConfig;
   scoring_config: ScoringConfig;
 }
+
+/** Public fields of an LLM-generated scenario, as returned by session/start. */
+interface LlmScenario {
+  title: string;
+  character_name: string;
+  character_persona: string;
+  opening_message: string;
+  currency: string;
+  patience: number;
+  max_turns: number;
+  current_ask: number | null;
+}
+
+interface SessionStartLlm {
+  llm: true;
+  session_token: string;
+  scenario: LlmScenario;
+}
+
+interface SessionStartNoLlm {
+  llm: false;
+}
+
+type SessionStartResponse = SessionStartLlm | SessionStartNoLlm;
 
 const EPOCH_MS = Date.UTC(2026, 6, 7); // 2026-07-07T00:00:00Z is day #1
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -63,22 +88,84 @@ async function fetchTodayScenario(dayNumber: number): Promise<ScenarioRecord> {
   return pb.collection('scenarios').getFirstListItem<ScenarioRecord>(`day_index=${dayIndex}`);
 }
 
-async function submitScore(scenarioId: string, dayIndex: number, score: number, turns: number, resultLabel: string): Promise<void> {
+/**
+ * Calls the backend's session/start route. Returns null when the call fails
+ * outright (network error, non-2xx, unexpected shape) so callers can fall
+ * back to the existing seeded rule-engine flow.
+ */
+async function startBackendSession(): Promise<SessionStartResponse | null> {
   try {
-    await pb.collection('scores').create({
-      scenario: scenarioId,
-      day_index: dayIndex,
-      score,
-      turns,
-      result_label: resultLabel,
+    const res = await fetch(`${apiBaseUrl}/api/game/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
     });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && data.llm === true && data.session_token && data.scenario) {
+      return data as SessionStartLlm;
+    }
+    if (data && data.llm === false) {
+      return { llm: false };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function submitScore(
+  dayIndex: number,
+  score: number,
+  turns: number,
+  resultLabel: string,
+  scenarioId?: string,
+): Promise<void> {
+  const payload: Record<string, unknown> = { day_index: dayIndex, score, turns, result_label: resultLabel };
+  if (scenarioId) payload.scenario = scenarioId;
+  try {
+    await pb.collection('scores').create(payload);
   } catch {
     try {
-      await pb.collection('scores').create({ scenario: scenarioId, score, turns, result_label: resultLabel });
+      const fallbackPayload: Record<string, unknown> = { score, turns, result_label: resultLabel };
+      if (scenarioId) fallbackPayload.scenario = scenarioId;
+      await pb.collection('scores').create(fallbackPayload);
     } catch {
       // Saving the score is best-effort; never let it break the game.
     }
   }
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+/**
+ * Deterministic client-side score for LLM sessions.
+ *
+ * LLM scenarios don't ship an opening/floor price pair client-side (only a
+ * possibly-null `current_ask`), so `computeScore`'s price-fraction formula
+ * can't be reused as-is. This is a simple, clearly-labeled heuristic based
+ * only on the outcome, turns used, and patience left that the server
+ * returned on the final turn — no LLM call, no hidden parameters.
+ */
+function computeLlmScore(turn: CharacterTurn, maxPatience: number, maxTurns: number): ScoreResult {
+  const patienceLeft = Math.max(0, turn.state.patience);
+  const patienceRatio = maxPatience > 0 ? clamp01(patienceLeft / maxPatience) : 0;
+  const turnsUsed = Math.max(1, turn.state.turns);
+  const turnsRatio = clamp01(1 - (turnsUsed - 1) / Math.max(1, maxTurns - 1));
+
+  if (turn.outcome === 'deal') {
+    const score = Math.max(0, Math.min(100, Math.round(60 + patienceRatio * 25 + turnsRatio * 15)));
+    let label: string;
+    if (score >= 85) label = 'Master Negotiator';
+    else if (score >= 65) label = 'Smooth Talker';
+    else label = 'Fair Dealer';
+    return { score, label };
+  }
+
+  const score = Math.max(0, Math.min(20, Math.round(patienceRatio * 20)));
+  return { score, label: 'No Deal' };
 }
 
 function buildShareText(
@@ -150,31 +237,55 @@ function renderPatience(patience: number, maxPatience: number): string {
   return '❤️'.repeat(bounded) + '🤍'.repeat(Math.max(0, maxPatience - bounded));
 }
 
-function renderGame(root: HTMLElement, scenario: ScenarioRecord, dayNumber: number, streak: number): void {
-  const config = scenario.engine_config;
-  const scoringConfig = scenario.scoring_config;
-  const maxPatience = config.patience;
-  const engine = createRuleEngine(config);
-  const initialTurn = engine.start();
+function escapeHtml(value: string): string {
+  const div = document.createElement('div');
+  div.textContent = value;
+  return div.innerHTML;
+}
+
+/** Everything renderGame needs, whether the negotiation is rule-engine or LLM driven. */
+interface GameContext {
+  dayNumber: number;
+  streak: number;
+  title: string;
+  characterName: string;
+  characterPersona: string;
+  openingMessage: string;
+  currency: string;
+  maxPatience: number;
+  showAsk: boolean;
+  engine: NegotiationEngine;
+  initialTurn: CharacterTurn;
+  scoreTurn: (turn: CharacterTurn) => ScoreResult;
+  recordScore: (score: number, label: string, turn: CharacterTurn) => void;
+}
+
+function renderGame(root: HTMLElement, ctx: GameContext): void {
+  const maxPatience = ctx.maxPatience;
+  const initialTurn = ctx.initialTurn;
 
   root.innerHTML = `
     <div class="game">
       <header class="game-header">
-        <span class="day-badge">Talked Down #${dayNumber}</span>
-        <h1 class="scenario-title">${escapeHtml(scenario.title)}</h1>
+        <span class="day-badge">Talked Down #${ctx.dayNumber}</span>
+        <h1 class="scenario-title">${escapeHtml(ctx.title)}</h1>
         <div class="character-line">
-          <span class="char-name">${escapeHtml(scenario.character_name)}</span>
-          <span class="char-persona">${escapeHtml(scenario.character_persona)}</span>
+          <span class="char-name">${escapeHtml(ctx.characterName)}</span>
+          <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
         </div>
         <div class="meters">
           <div>
             <span class="patience-label">Patience</span>
             <div class="patience-meter" id="patience-meter">${renderPatience(initialTurn.state.patience, maxPatience)}</div>
           </div>
-          <div class="ask-display">
+          ${
+            ctx.showAsk
+              ? `<div class="ask-display">
             <span class="ask-label">Current ask</span>
-            <div class="ask-value" id="ask-value">${formatAsk(initialTurn.state.currentAsk, config.currency)}</div>
-          </div>
+            <div class="ask-value" id="ask-value">${formatAsk(initialTurn.state.currentAsk, ctx.currency)}</div>
+          </div>`
+              : ''
+          }
         </div>
       </header>
       <div class="chat-log" id="chat-log"></div>
@@ -194,23 +305,33 @@ function renderGame(root: HTMLElement, scenario: ScenarioRecord, dayNumber: numb
   const askValue = root.querySelector<HTMLElement>('#ask-value');
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
 
-  if (!chatLog || !inputRow || !chatInput || !sendBtn || !patienceMeter || !askValue || !endPanel) {
+  if (!chatLog || !inputRow || !chatInput || !sendBtn || !patienceMeter || !endPanel) {
     return;
   }
 
-  const addBubble = (container: HTMLElement, sender: 'character' | 'user' | 'system', text: string): void => {
+  const addBubble = (container: HTMLElement, sender: 'character' | 'user' | 'system', text: string): HTMLElement => {
     const bubble = document.createElement('div');
     bubble.className = `bubble ${sender}`;
     bubble.textContent = text;
     container.appendChild(bubble);
     container.scrollTop = container.scrollHeight;
+    return bubble;
   };
 
-  addBubble(chatLog, 'character', scenario.opening_message);
+  const addTypingBubble = (container: HTMLElement): HTMLElement => {
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble character typing';
+    bubble.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+    return bubble;
+  };
+
+  addBubble(chatLog, 'character', ctx.openingMessage);
 
   const applyState = (turn: CharacterTurn): void => {
     patienceMeter.innerHTML = renderPatience(turn.state.patience, maxPatience);
-    askValue.textContent = formatAsk(turn.state.currentAsk, config.currency);
+    if (askValue) askValue.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
   };
 
   const endGame = (turn: CharacterTurn): void => {
@@ -218,16 +339,16 @@ function renderGame(root: HTMLElement, scenario: ScenarioRecord, dayNumber: numb
     sendBtn.disabled = true;
 
     const outcome: 'deal' | 'no_deal' = turn.outcome === 'deal' ? 'deal' : 'no_deal';
-    const { score, label } = computeScore(scoringConfig, config, turn.dealPrice, turn.state.turns, turn.state.patience);
+    const { score, label } = ctx.scoreTurn(turn);
 
-    void submitScore(scenario.id, scenario.day_index, score, turn.state.turns, label);
+    ctx.recordScore(score, label, turn);
 
     endPanel.classList.remove('hidden');
     endPanel.innerHTML = `
       <div class="end-card">
         <div class="end-result">
           <p class="end-outcome ${outcome === 'deal' ? 'deal' : 'no-deal'}">
-            ${outcome === 'deal' ? `🤝 Deal at ${formatAsk(turn.dealPrice ?? 0, config.currency)}` : '💥 No Deal'}
+            ${outcome === 'deal' ? `🤝 Deal at ${formatAsk(turn.dealPrice ?? 0, ctx.currency)}` : '💥 No Deal'}
           </p>
           <p class="end-detail">${outcome === 'deal' ? `Closed in ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}` : `Walked away after ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}`}</p>
         </div>
@@ -236,7 +357,7 @@ function renderGame(root: HTMLElement, scenario: ScenarioRecord, dayNumber: numb
           <div class="end-score-label">${label}</div>
         </div>
         <div class="end-meta">
-          <span class="streak-badge">🔥 ${streak} day streak</span>
+          <span class="streak-badge">🔥 ${ctx.streak} day streak</span>
           <span>Patience left: ${Math.max(0, turn.state.patience)}/${maxPatience}</span>
         </div>
         <div class="share-card" id="share-card"></div>
@@ -250,7 +371,7 @@ function renderGame(root: HTMLElement, scenario: ScenarioRecord, dayNumber: numb
       </div>
     `;
 
-    const shareText = buildShareText(dayNumber, outcome, turn.state.turns, score, Math.max(0, turn.state.patience), maxPatience);
+    const shareText = buildShareText(ctx.dayNumber, outcome, turn.state.turns, score, Math.max(0, turn.state.patience), maxPatience);
     const shareCard = endPanel.querySelector<HTMLElement>('#share-card');
     if (shareCard) shareCard.textContent = shareText;
 
@@ -276,25 +397,107 @@ function renderGame(root: HTMLElement, scenario: ScenarioRecord, dayNumber: numb
 
   inputRow.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (chatInput.disabled) return;
     const text = chatInput.value.trim();
     if (!text) return;
+
     addBubble(chatLog, 'user', text);
     chatInput.value = '';
+    chatInput.disabled = true;
+    sendBtn.disabled = true;
 
-    const turn = engine.respond(text);
-    addBubble(chatLog, 'character', turn.message);
-    applyState(turn);
+    const typingBubble = addTypingBubble(chatLog);
 
-    if (turn.done) {
-      endGame(turn);
-    }
+    void ctx.engine
+      .respond(text)
+      .then((turn) => {
+        typingBubble.remove();
+        addBubble(chatLog, 'character', turn.message);
+        applyState(turn);
+
+        if (turn.done) {
+          endGame(turn);
+        } else {
+          chatInput.disabled = false;
+          sendBtn.disabled = false;
+          chatInput.focus();
+        }
+      })
+      .catch(() => {
+        // Turn was not consumed: nothing was applied to state, so the
+        // player can simply try sending again.
+        typingBubble.remove();
+        addBubble(chatLog, 'system', 'The line went quiet — try sending that again.');
+        chatInput.disabled = false;
+        sendBtn.disabled = false;
+        chatInput.focus();
+      });
   });
 }
 
-function escapeHtml(value: string): string {
-  const div = document.createElement('div');
-  div.textContent = value;
-  return div.innerHTML;
+async function loadRuleEngineGame(root: HTMLElement, dayNumber: number): Promise<void> {
+  let scenario: ScenarioRecord;
+  try {
+    scenario = await fetchTodayScenario(dayNumber);
+  } catch {
+    root.innerHTML = '<div class="error">Could not load today\u2019s negotiation. Please refresh to try again.</div>';
+    return;
+  }
+
+  const streak = updateStreak(dayNumber);
+  const config = scenario.engine_config;
+  const scoringConfig = scenario.scoring_config;
+  const engine = createRuleEngine(config);
+  const initialTurn = engine.start();
+
+  renderGame(root, {
+    dayNumber,
+    streak,
+    title: scenario.title,
+    characterName: scenario.character_name,
+    characterPersona: scenario.character_persona,
+    openingMessage: scenario.opening_message,
+    currency: config.currency,
+    maxPatience: config.patience,
+    showAsk: true,
+    engine,
+    initialTurn,
+    scoreTurn: (turn) => computeScore(scoringConfig, config, turn.dealPrice, turn.state.turns, turn.state.patience),
+    recordScore: (score, label, turn) => {
+      void submitScore(scenario.day_index, score, turn.state.turns, label, scenario.id);
+    },
+  });
+}
+
+function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: number): void {
+  const streak = updateStreak(dayNumber);
+  const scenario = session.scenario;
+  const showAsk = scenario.current_ask !== null;
+  const startState: CharacterTurnState = {
+    patience: scenario.patience,
+    currentAsk: scenario.current_ask ?? 0,
+    turns: 0,
+  };
+  const engine = createLlmEngine(session.session_token, startState);
+  const initialTurn = engine.start();
+
+  renderGame(root, {
+    dayNumber,
+    streak,
+    title: scenario.title,
+    characterName: scenario.character_name,
+    characterPersona: scenario.character_persona,
+    openingMessage: scenario.opening_message,
+    currency: scenario.currency,
+    maxPatience: scenario.patience,
+    showAsk,
+    engine,
+    initialTurn,
+    scoreTurn: (turn) => computeLlmScore(turn, scenario.patience, scenario.max_turns),
+    recordScore: (score, label, turn) => {
+      void submitScore(dayNumber, score, turn.state.turns, label);
+    },
+  });
 }
 
 async function main(): Promise<void> {
@@ -305,16 +508,15 @@ async function main(): Promise<void> {
 
   const dayNumber = getDayNumber();
 
-  let scenario: ScenarioRecord;
-  try {
-    scenario = await fetchTodayScenario(dayNumber);
-  } catch {
-    root.innerHTML = '<div class="error">Could not load today\u2019s negotiation. Please refresh to try again.</div>';
+  const session = await startBackendSession();
+  if (session && session.llm === true) {
+    loadLlmGame(root, session, dayNumber);
     return;
   }
 
-  const streak = updateStreak(dayNumber);
-  renderGame(root, scenario, dayNumber, streak);
+  // session.llm === false, or the start call failed entirely: fall back to
+  // today's existing seeded rule-engine flow, unchanged.
+  await loadRuleEngineGame(root, dayNumber);
 }
 
 void main();

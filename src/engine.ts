@@ -57,8 +57,13 @@ export interface CharacterTurn {
 export interface NegotiationEngine {
   /** Initializes/returns the starting state. Does not consume a user turn. */
   start(): CharacterTurn;
-  /** Consumes one user message and advances the negotiation by one turn. */
-  respond(userMessage: string): CharacterTurn;
+  /**
+   * Consumes one user message and advances the negotiation by one turn.
+   * Async because LLM-backed implementations need a network round trip;
+   * the rule engine resolves immediately. May reject (e.g. a network
+   * error) — callers must not treat a rejection as consuming the turn.
+   */
+  respond(userMessage: string): Promise<CharacterTurn>;
 }
 
 const MAX_TURNS = 10;
@@ -134,7 +139,7 @@ export function createRuleEngine(config: EngineConfig): NegotiationEngine {
     return snapshot('');
   }
 
-  function respond(userMessage: string): CharacterTurn {
+  async function respond(userMessage: string): Promise<CharacterTurn> {
     if (done) {
       return snapshot('');
     }
