@@ -264,16 +264,14 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
         </div>
         ${ctx.playerBrief ? `<p class="player-brief">${escapeHtml(ctx.playerBrief)}</p>` : ''}
-        <div class="meters">
-          ${
-            ctx.showAsk
-              ? `<div class="ask-display">
+        ${
+          ctx.showAsk
+            ? `<div class="meters"><div class="ask-display">
             <span class="ask-label">Current ask</span>
             <div class="ask-value" id="ask-value">${formatAsk(initialTurn.state.currentAsk, ctx.currency)}</div>
-          </div>`
-              : ''
-          }
-        </div>
+          </div></div>`
+            : ''
+        }
       </header>
       <div class="chat-log" id="chat-log"></div>
       <form class="input-row" id="input-row">
