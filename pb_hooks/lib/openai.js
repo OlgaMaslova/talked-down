@@ -33,21 +33,27 @@ function responseBodyToString(res) {
   return toString(res.body);
 }
 
-// USD per 1M tokens: [input, output]. Unknown models log tokens with cost 0.
+// USD per 1M tokens: [input, output, cache_read]. Unknown models log tokens with cost 0.
 var PRICING_PER_MTOK = {
-  "gpt-4.1": [2.0, 8.0],
-  "gpt-4.1-mini": [0.4, 1.6],
-  "gpt-4.1-nano": [0.1, 0.4],
-  "gpt-4o": [2.5, 10.0],
-  "gpt-4o-mini": [0.15, 0.6],
+  "gpt-4.1": [2.0, 8.0, 0.5],
+  "gpt-4.1-mini": [0.4, 1.6, 0.1],
+  "gpt-4.1-nano": [0.1, 0.4, 0.025],
+  "gpt-4o": [2.5, 10.0, 1.25],
+  "gpt-4o-mini": [0.15, 0.6, 0.075],
 };
 
-function computeCostUSD(model, promptTokens, completionTokens) {
+function computeCostUSD(model, promptTokens, completionTokens, cachedTokens) {
   var rates = PRICING_PER_MTOK[model];
   if (!rates) {
     return 0;
   }
-  return (promptTokens * rates[0] + completionTokens * rates[1]) / 1000000;
+  cachedTokens = cachedTokens || 0;
+  if (cachedTokens > promptTokens) {
+    cachedTokens = promptTokens;
+  }
+  var uncached = promptTokens - cachedTokens;
+  var cacheRate = typeof rates[2] === "number" ? rates[2] : rates[0];
+  return (uncached * rates[0] + cachedTokens * cacheRate + completionTokens * rates[1]) / 1000000;
 }
 
 function traceUsage(entry) {
@@ -59,8 +65,9 @@ function traceUsage(entry) {
     record.set("context", entry.context || "");
     record.set("prompt_tokens", entry.promptTokens || 0);
     record.set("completion_tokens", entry.completionTokens || 0);
+    record.set("cached_tokens", entry.cachedTokens || 0);
     record.set("total_tokens", (entry.promptTokens || 0) + (entry.completionTokens || 0));
-    record.set("cost_usd", computeCostUSD(entry.model, entry.promptTokens || 0, entry.completionTokens || 0));
+    record.set("cost_usd", computeCostUSD(entry.model, entry.promptTokens || 0, entry.completionTokens || 0, entry.cachedTokens || 0));
     record.set("duration_ms", entry.durationMs || 0);
     record.set("status", entry.error ? "error" : "ok");
     record.set("error", entry.error ? String(entry.error).slice(0, 500) : "");
@@ -133,6 +140,7 @@ function chatJSON(messages, opts) {
     context: opts.context,
     promptTokens: usage.prompt_tokens || 0,
     completionTokens: usage.completion_tokens || 0,
+    cachedTokens: (usage.prompt_tokens_details && usage.prompt_tokens_details.cached_tokens) || 0,
     durationMs: durationMs,
   });
   if (!data.choices || !data.choices.length || !data.choices[0].message) {
