@@ -899,6 +899,156 @@ function runPlaywrightPipeline(app, targetDate, source, force) {
   };
 }
 
+var DAY_ONE_UTC_MS = Date.UTC(2026, 6, 7); // 2026-07-07T00:00:00Z is day #1 (matches actor.js)
+
+function dayNumberForDate(dateStr) {
+  var ms = Date.parse(dateStr + "T00:00:00Z");
+  if (isNaN(ms)) {
+    return 0;
+  }
+  return Math.floor((ms - DAY_ONE_UTC_MS) / 86400000) + 1;
+}
+
+// Recap of the prior (completed) UTC day: aggregate that day's non-calibration
+// scores into a public recaps record. Contains only already-public score data.
+function computeDailyRecap(app, recapDate) {
+  recapDate = validDateString(recapDate) ? recapDate : dateOffsetUTC(-1);
+  var dayNumber = dayNumberForDate(recapDate);
+
+  var records = [];
+  try {
+    records = app.findRecordsByFilter(
+      "scores",
+      "day_number = {:day} && device_id != {:calib}",
+      "-score",
+      5000,
+      0,
+      { day: dayNumber, calib: "calibration" }
+    );
+  } catch (err) {
+    records = [];
+  }
+
+  var plays = 0;
+  var deals = 0;
+  var total = 0;
+  var best = null;
+  var bestHandle = "";
+  for (var i = 0; i < records.length; i++) {
+    var r = records[i];
+    plays++;
+    var score = r.getInt("score");
+    total += score;
+    if (String(r.getString("outcome")) === "deal") {
+      deals++;
+    }
+    if (best === null || score > best) {
+      best = score;
+      bestHandle = String(r.getString("handle") || "");
+    }
+  }
+
+  var scenarioTitle = "";
+  var scenario = findPublishedScenarioForDate(app, recapDate);
+  if (scenario) {
+    scenarioTitle = scenario.getString("title");
+  }
+
+  var recap = {
+    recap_date: recapDate,
+    day_number: dayNumber,
+    plays: plays,
+    deals: deals,
+    no_deals: plays - deals,
+    avg_score: plays ? Math.round((total / plays) * 10) / 10 : 0,
+    best_score: best === null ? 0 : best,
+    best_handle: bestHandle,
+    scenario_title: scenarioTitle
+  };
+
+  var collection = app.findCollectionByNameOrId("recaps");
+  var record = null;
+  try {
+    record = app.findFirstRecordByFilter("recaps", "recap_date = {:date}", { date: recapDate });
+  } catch (err2) {}
+  if (!record) {
+    record = new Record(collection);
+  }
+  record.set("recap_date", recap.recap_date);
+  record.set("day_number", recap.day_number);
+  record.set("plays", recap.plays);
+  record.set("deals", recap.deals);
+  record.set("no_deals", recap.no_deals);
+  record.set("avg_score", recap.avg_score);
+  record.set("best_score", recap.best_score);
+  record.set("best_handle", recap.best_handle);
+  record.set("scenario_title", recap.scenario_title);
+  app.save(record);
+
+  return recap;
+}
+
+function recordPipelineRun(app, targetDate, source, result, recap, errorMessage) {
+  try {
+    var collection = app.findCollectionByNameOrId("pipeline_runs");
+    var record = new Record(collection);
+    record.set("run_date", dateOffsetUTC(0));
+    record.set("target_date", String(targetDate || ""));
+    record.set("source", String(source || "cron").slice(0, 16));
+    var status = errorMessage ? "error" : String((result && result.status) || "failed");
+    if (["published", "skipped", "failed", "error"].indexOf(status) === -1) {
+      status = "failed";
+    }
+    record.set("status", status);
+    record.set("result", JSON.stringify(result || { error: errorMessage || "unknown" }));
+    record.set("recap", JSON.stringify(recap || null));
+    app.save(record);
+  } catch (err) {
+    logError(app, "pipeline_run record failed: " + err.message);
+  }
+}
+
+// Public health status for the external watchdog. Exposes only booleans,
+// dates, and run statuses — never scenario secrets or hidden params.
+function pipelineStatus(app) {
+  var today = dateOffsetUTC(0);
+  var tomorrow = tomorrowUTC();
+  var todayReady = !!findPublishedScenarioForDate(app, today);
+  var tomorrowReady = !!findPublishedScenarioForDate(app, tomorrow);
+
+  var lastRun = null;
+  try {
+    var runs = app.findRecordsByFilter("pipeline_runs", "", "-created", 1, 0);
+    if (runs && runs.length) {
+      lastRun = {
+        run_date: runs[0].getString("run_date"),
+        target_date: runs[0].getString("target_date"),
+        status: runs[0].getString("status")
+      };
+    }
+  } catch (err) {}
+
+  var recapDate = dateOffsetUTC(-1);
+  var recapReady = false;
+  try {
+    recapReady = !!app.findFirstRecordByFilter("recaps", "recap_date = {:date}", { date: recapDate });
+  } catch (err2) {}
+
+  var lastRunOk = !lastRun || lastRun.status === "published" || lastRun.status === "skipped";
+  var ok = todayReady && lastRunOk;
+
+  return {
+    ok: ok,
+    today: today,
+    today_scenario_ready: todayReady,
+    tomorrow: tomorrow,
+    tomorrow_scenario_ready: tomorrowReady,
+    recap_date: recapDate,
+    recap_ready: recapReady,
+    last_run: lastRun
+  };
+}
+
 function getBody(e) {
   try {
     return e.requestInfo().body || {};
@@ -948,6 +1098,9 @@ module.exports = {
   tomorrowUTC: tomorrowUTC,
   validDateString: validDateString,
   runPlaywrightPipeline: runPlaywrightPipeline,
+  computeDailyRecap: computeDailyRecap,
+  recordPipelineRun: recordPipelineRun,
+  pipelineStatus: pipelineStatus,
   getBody: getBody,
   getHeader: getHeader,
   logInfo: logInfo,
