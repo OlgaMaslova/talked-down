@@ -45,6 +45,19 @@ function mintHandle(): string {
   return `${adjective}${noun}${num}`;
 }
 
+/**
+ * Overwrites the stored identity with one claimed via email magic link,
+ * so the claimed handle follows the user onto this browser/profile.
+ */
+export function adoptIdentity(deviceId: string, handle: string): void {
+  try {
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+    localStorage.setItem(HANDLE_KEY, handle);
+  } catch {
+    // Best-effort: the claim is still recorded server-side.
+  }
+}
+
 /** Returns the persistent device identity, minting one on first play. */
 export function getIdentity(): DeviceIdentity {
   let deviceId: string | null = null;

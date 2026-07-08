@@ -6,6 +6,7 @@
  */
 
 import { apiBaseUrl } from './pocketbase';
+import { adoptIdentity } from './identity';
 import type { DeviceIdentity } from './identity';
 
 const CLAIMED_KEY = 'td_claimed';
@@ -64,6 +65,7 @@ async function claimStart(deviceId: string, handle: string, email: string): Prom
 export interface ClaimVerifyResult {
   handle: string;
   email: string;
+  deviceId: string;
 }
 
 /** Calls claim/verify; returns null when the token is invalid/expired or the request fails. */
@@ -77,7 +79,11 @@ export async function verifyClaimToken(token: string, deviceId: string): Promise
     if (!res.ok) return null;
     const data = await res.json();
     if (data && data.ok === true && typeof data.handle === 'string' && typeof data.email === 'string') {
-      return { handle: data.handle, email: data.email };
+      return {
+        handle: data.handle,
+        email: data.email,
+        deviceId: typeof data.device_id === 'string' && data.device_id ? data.device_id : deviceId,
+      };
     }
     return null;
   } catch {
@@ -181,6 +187,12 @@ export async function consumeClaimTokenFromUrl(
   window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
 
   if (result) {
+    // The link may be opened in a different browser/profile (e.g. an email
+    // app's in-app browser) than the one that played. Adopt the claim's
+    // original identity so the handle, history, and streak follow the user.
+    if (result.deviceId !== deviceId) {
+      adoptIdentity(result.deviceId, result.handle);
+    }
     markClaimed(result.email);
     return { ok: true, handle: result.handle };
   }

@@ -126,6 +126,19 @@ routerAdd("POST", "/api/claim/start", (e) => {
 });
 
 routerAdd("POST", "/api/claim/verify", (e) => {
+  function logIncident(app, session, type, details) {
+    try {
+      var collection = app.findCollectionByNameOrId("incidents");
+      var record = new Record(collection);
+      record.set("session", String(session || "").slice(0, 64));
+      record.set("type", String(type || "unknown").slice(0, 64));
+      record.set("details", JSON.stringify(details || {}));
+      app.save(record);
+    } catch (err) {
+      try { console.log("incident_log_failed: " + err.message); } catch (ignored) {}
+    }
+  }
+
   var body = e.requestInfo().body || {};
   var token = String(body.token || "");
   var deviceId = String(body.device_id || "").trim().slice(0, 64);
@@ -138,16 +151,32 @@ routerAdd("POST", "/api/claim/verify", (e) => {
   try {
     record = e.app.findFirstRecordByFilter(
       "claims",
-      "token_hash = {:token_hash} && status = 'pending' && expires >= {:now} && device_id = {:device_id}",
-      { token_hash: tokenHash, now: now, device_id: deviceId }
+      "token_hash = {:token_hash}",
+      { token_hash: tokenHash }
     );
   } catch (err) {
+    logIncident(e.app, deviceId, "claim_verify_failed", { reason: "not_found" });
     return e.json(400, { error: "invalid_or_expired" });
   }
+
+  var status = record.getString("status");
+  // Idempotent: re-opening an already-consumed link on the same device stays a success.
+  if (status === "claimed") {
+    if (record.getString("device_id") === deviceId) {
+      return e.json(200, { ok: true, handle: record.getString("handle"), email: record.getString("email"), device_id: record.getString("device_id") });
+    }
+    logIncident(e.app, deviceId, "claim_verify_failed", { reason: "already_claimed", claim_id: record.id });
+    return e.json(400, { error: "invalid_or_expired" });
+  }
+  if (status !== "pending" || record.getString("expires").replace("T", " ") < now) {
+    logIncident(e.app, deviceId, "claim_verify_failed", { reason: status !== "pending" ? "bad_status:" + status : "expired", claim_id: record.id });
+    return e.json(400, { error: "invalid_or_expired" });
+  }
+
   record.set("status", "claimed");
   record.set("claimed_at", now);
   e.app.save(record);
-  return e.json(200, { ok: true, handle: record.getString("handle"), email: record.getString("email") });
+  return e.json(200, { ok: true, handle: record.getString("handle"), email: record.getString("email"), device_id: record.getString("device_id") });
 });
 
 routerAdd("GET", "/api/game/leaderboard", (e) => {
