@@ -76,7 +76,19 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   var accepted = false;
   var pendingConfirmation = null;
 
-  if (action === "accept") {
+  var isNonPrice = spec.frame === "non_price";
+
+  if (action === "accept" && isNonPrice) {
+    // Non-price scenario: no numeric offer to validate. Close only after an
+    // explicit confirmation turn: the first accept becomes a proposal the
+    // player must answer; the next accept (with the proposal pending) closes.
+    if (state.pending_confirmation === "terms") {
+      accepted = true;
+    } else {
+      action = "continue";
+      pendingConfirmation = "terms";
+    }
+  } else if (action === "accept") {
     var floorOk = actorLib.dealRespectsFloor(spec, actor.offer);
     var playerAgreed =
       actorLib.playerStatedPrice(transcript, playerMessage, actor.offer) ||
@@ -106,7 +118,7 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     done = true;
     outcome = "deal";
     status = "deal";
-    dealPrice = actor.offer;
+    dealPrice = isNonPrice ? null : actor.offer;
   } else if (action === "walk_away" || nextPatience <= 0 || nextTurns >= maxTurns) {
     done = true;
     outcome = "no_deal";
@@ -143,7 +155,7 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   };
   if (done) {
     response.outcome = outcome;
-    if (outcome === "deal") {
+    if (outcome === "deal" && dealPrice !== null) {
       response.dealPrice = dealPrice;
     }
   }
