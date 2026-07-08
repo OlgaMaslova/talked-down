@@ -174,8 +174,6 @@ function buildShareText(
   outcome: 'deal' | 'no_deal',
   turns: number,
   score: number,
-  patienceRemaining: number,
-  initialPatience: number,
 ): string {
   const line1 = `Talked Down #${dayNumber}`;
   const line2 = outcome === 'deal' ? `🤝 Deal in ${turns} turn${turns === 1 ? '' : 's'}` : '💥 No deal';
@@ -184,12 +182,7 @@ function buildShareText(
   const moneyBar = '💰'.repeat(moneyFilled) + '⬜'.repeat(5 - moneyFilled);
   const line3 = `${moneyBar} ${score}/100`;
 
-  const patienceFraction = initialPatience > 0 ? patienceRemaining / initialPatience : 0;
-  const patienceFilled = Math.min(5, Math.max(0, Math.round(patienceFraction * 5)));
-  const patienceBar = '😤'.repeat(patienceFilled) + '⬜'.repeat(5 - patienceFilled);
-  const line4 = `${patienceBar} patience left`;
-
-  return [line1, line2, line3, line4].join('\n');
+  return [line1, line2, line3].join('\n');
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -233,11 +226,6 @@ function startCountdown(el: HTMLElement): void {
   window.setInterval(update, 1000);
 }
 
-function renderPatience(patience: number, maxPatience: number): string {
-  const bounded = Math.max(0, Math.min(maxPatience, patience));
-  return '❤️'.repeat(bounded) + '🤍'.repeat(Math.max(0, maxPatience - bounded));
-}
-
 function escapeHtml(value: string): string {
   const div = document.createElement('div');
   div.textContent = value;
@@ -263,7 +251,6 @@ interface GameContext {
 }
 
 function renderGame(root: HTMLElement, ctx: GameContext): void {
-  const maxPatience = ctx.maxPatience;
   const initialTurn = ctx.initialTurn;
 
   root.innerHTML = `
@@ -277,10 +264,6 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         </div>
         ${ctx.playerBrief ? `<p class="player-brief">${escapeHtml(ctx.playerBrief)}</p>` : ''}
         <div class="meters">
-          <div>
-            <span class="patience-label">Patience</span>
-            <div class="patience-meter" id="patience-meter">${renderPatience(initialTurn.state.patience, maxPatience)}</div>
-          </div>
           ${
             ctx.showAsk
               ? `<div class="ask-display">
@@ -304,11 +287,10 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const inputRow = root.querySelector<HTMLFormElement>('#input-row');
   const chatInput = root.querySelector<HTMLInputElement>('#chat-input');
   const sendBtn = root.querySelector<HTMLButtonElement>('#send-btn');
-  const patienceMeter = root.querySelector<HTMLElement>('#patience-meter');
   const askValue = root.querySelector<HTMLElement>('#ask-value');
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
 
-  if (!chatLog || !inputRow || !chatInput || !sendBtn || !patienceMeter || !endPanel) {
+  if (!chatLog || !inputRow || !chatInput || !sendBtn || !endPanel) {
     return;
   }
 
@@ -333,7 +315,6 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   addBubble(chatLog, 'character', ctx.openingMessage);
 
   const applyState = (turn: CharacterTurn): void => {
-    patienceMeter.innerHTML = renderPatience(turn.state.patience, maxPatience);
     if (askValue) askValue.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
   };
 
@@ -361,7 +342,6 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         </div>
         <div class="end-meta">
           <span class="streak-badge">🔥 ${ctx.streak} day streak</span>
-          <span>Patience left: ${Math.max(0, turn.state.patience)}/${maxPatience}</span>
         </div>
         <div class="share-card" id="share-card"></div>
         <div class="end-actions">
@@ -374,7 +354,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
       </div>
     `;
 
-    const shareText = buildShareText(ctx.dayNumber, outcome, turn.state.turns, score, Math.max(0, turn.state.patience), maxPatience);
+    const shareText = buildShareText(ctx.dayNumber, outcome, turn.state.turns, score);
     const shareCard = endPanel.querySelector<HTMLElement>('#share-card');
     if (shareCard) shareCard.textContent = shareText;
 
