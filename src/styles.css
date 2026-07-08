@@ -381,6 +381,66 @@ body {
   color: var(--text);
 }
 
+.handle-badge {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.end-percentile {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  min-height: 1.1em;
+}
+
+.end-percentile strong {
+  color: var(--accent-2);
+}
+
+.history-box {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.history-title {
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 0.3rem;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.history-list li {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.history-day {
+  color: var(--text-dim);
+  min-width: 2.5rem;
+}
+
+.history-label {
+  flex: 1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-score {
+  font-weight: 700;
+  color: var(--accent-2);
+}
+
 .share-card {
   background: var(--panel);
   border: 1px solid var(--border);

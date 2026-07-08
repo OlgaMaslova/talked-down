@@ -3,6 +3,7 @@ import { pb, apiBaseUrl } from './pocketbase';
 import { createRuleEngine, type CharacterTurn, type CharacterTurnState, type EngineConfig, type NegotiationEngine } from './engine';
 import { createLlmEngine } from './llmEngine';
 import { computeScore, type ScoringConfig, type ScoreResult } from './scoring';
+import { getIdentity, type DeviceIdentity } from './identity';
 
 interface ScenarioRecord {
   id: string;
@@ -118,12 +119,22 @@ async function startBackendSession(): Promise<SessionStartResponse | null> {
 
 async function submitScore(
   dayIndex: number,
+  dayNumber: number,
+  identity: DeviceIdentity,
   score: number,
   turns: number,
   resultLabel: string,
   scenarioId?: string,
 ): Promise<void> {
-  const payload: Record<string, unknown> = { day_index: dayIndex, score, turns, result_label: resultLabel };
+  const payload: Record<string, unknown> = {
+    day_index: dayIndex,
+    day_number: dayNumber,
+    device_id: identity.deviceId,
+    handle: identity.handle,
+    score,
+    turns,
+    result_label: resultLabel,
+  };
   if (scenarioId) payload.scenario = scenarioId;
   try {
     await pb.collection('scores').create(payload);
@@ -135,6 +146,47 @@ async function submitScore(
     } catch {
       // Saving the score is best-effort; never let it break the game.
     }
+  }
+}
+
+interface PercentileResponse {
+  day_number: number;
+  score: number;
+  plays: number;
+  percentile: number;
+}
+
+async function fetchPercentile(dayNumber: number, score: number): Promise<PercentileResponse | null> {
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/game/percentile?day_number=${dayNumber}&score=${score}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && typeof data.percentile === 'number' && typeof data.plays === 'number') {
+      return data as PercentileResponse;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+interface HistoryEntry {
+  day_number?: number;
+  score: number;
+  turns: number;
+  result_label: string;
+  created: string;
+}
+
+async function fetchHistory(deviceId: string): Promise<HistoryEntry[]> {
+  try {
+    const result = await pb.collection('scores').getList<HistoryEntry>(1, 10, {
+      filter: `device_id="${deviceId}"`,
+      sort: '-created',
+    });
+    return result.items;
+  } catch {
+    return [];
   }
 }
 
@@ -237,6 +289,7 @@ function escapeHtml(value: string): string {
 interface GameContext {
   dayNumber: number;
   streak: number;
+  identity: DeviceIdentity;
   title: string;
   characterName: string;
   characterPersona: string;
@@ -339,9 +392,12 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           <div class="end-score-number">${score}/100</div>
           <div class="end-score-label">${label}</div>
         </div>
+        <div class="end-percentile" id="end-percentile"></div>
         <div class="end-meta">
+          <span class="handle-badge" title="Your handle on this device">🎭 ${escapeHtml(ctx.identity.handle)}</span>
           <span class="streak-badge">🔥 ${ctx.streak} day streak</span>
         </div>
+        <div class="history-box" id="history-box"></div>
         <div class="share-card" id="share-card"></div>
         <div class="end-actions">
           <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
@@ -375,6 +431,35 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
     const countdownEl = endPanel.querySelector<HTMLElement>('#countdown-value');
     if (countdownEl) startCountdown(countdownEl);
+
+    // Anonymous daily percentile vs today's score distribution (no signup).
+    const percentileEl = endPanel.querySelector<HTMLElement>('#end-percentile');
+    if (percentileEl) {
+      percentileEl.textContent = 'Checking today\u2019s standings…';
+      void fetchPercentile(ctx.dayNumber, score).then((p) => {
+        if (!p) {
+          percentileEl.textContent = '';
+          return;
+        }
+        const topPct = Math.max(1, 100 - p.percentile + 1);
+        percentileEl.innerHTML = `You scored better than <strong>${p.percentile}%</strong> of today\u2019s ${p.plays} negotiator${p.plays === 1 ? '' : 's'} — top\u00a0${topPct}%`;
+      });
+    }
+
+    // Play history for this device's silent identity.
+    const historyBox = endPanel.querySelector<HTMLElement>('#history-box');
+    if (historyBox) {
+      void fetchHistory(ctx.identity.deviceId).then((items) => {
+        if (items.length === 0) return;
+        const rows = items
+          .map((h) => {
+            const day = h.day_number ? `#${h.day_number}` : new Date(h.created).toISOString().slice(5, 10);
+            return `<li><span class="history-day">${escapeHtml(String(day))}</span><span class="history-label">${escapeHtml(h.result_label)}</span><span class="history-score">${h.score}/100</span></li>`;
+          })
+          .join('');
+        historyBox.innerHTML = `<div class="history-title">Your recent negotiations</div><ul class="history-list">${rows}</ul>`;
+      });
+    }
   };
 
   inputRow.addEventListener('submit', (event) => {
@@ -431,6 +516,7 @@ async function loadRuleEngineGame(root: HTMLElement, dayNumber: number): Promise
   }
 
   const streak = updateStreak(dayNumber);
+  const identity = getIdentity();
   const config = scenario.engine_config;
   const scoringConfig = scenario.scoring_config;
   const engine = createRuleEngine(config);
@@ -439,6 +525,7 @@ async function loadRuleEngineGame(root: HTMLElement, dayNumber: number): Promise
   renderGame(root, {
     dayNumber,
     streak,
+    identity,
     title: scenario.title,
     characterName: scenario.character_name,
     characterPersona: scenario.character_persona,
@@ -450,13 +537,14 @@ async function loadRuleEngineGame(root: HTMLElement, dayNumber: number): Promise
     initialTurn,
     scoreTurn: (turn) => computeScore(scoringConfig, config, turn.dealPrice, turn.state.turns, turn.state.patience),
     recordScore: (score, label, turn) => {
-      void submitScore(scenario.day_index, score, turn.state.turns, label, scenario.id);
+      void submitScore(scenario.day_index, dayNumber, identity, score, turn.state.turns, label, scenario.id);
     },
   });
 }
 
 function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: number): void {
   const streak = updateStreak(dayNumber);
+  const identity = getIdentity();
   const scenario = session.scenario;
   const showAsk = scenario.current_ask !== null;
   const startState: CharacterTurnState = {
@@ -470,6 +558,7 @@ function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: num
   renderGame(root, {
     dayNumber,
     streak,
+    identity,
     title: scenario.title,
     characterName: scenario.character_name,
     characterPersona: scenario.character_persona,
@@ -482,7 +571,7 @@ function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: num
     initialTurn,
     scoreTurn: (turn) => computeLlmScore(turn, scenario.patience, scenario.max_turns),
     recordScore: (score, label, turn) => {
-      void submitScore(dayNumber, score, turn.state.turns, label);
+      void submitScore(dayNumber, dayNumber, identity, score, turn.state.turns, label);
     },
   });
 }
