@@ -399,7 +399,11 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         applyState(turn);
 
         if (turn.done) {
-          endGame(turn);
+          // Let the closing message land before the end panel appears.
+          window.setTimeout(() => {
+            endGame(turn);
+            chatLog.scrollTop = chatLog.scrollHeight;
+          }, 1600);
         } else {
           chatInput.disabled = false;
           sendBtn.disabled = false;

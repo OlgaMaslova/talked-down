@@ -74,10 +74,24 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   var nextPatience = actorLib.intOrDefault(state.patience, actorLib.intOrDefault(spec.patience, 10)) + actor.patience_delta;
   var action = actor.action;
   var accepted = false;
+  var pendingConfirmation = null;
 
   if (action === "accept") {
-    if (actorLib.dealRespectsFloor(spec, actor.offer)) {
+    var floorOk = actorLib.dealRespectsFloor(spec, actor.offer);
+    var playerAgreed =
+      actorLib.playerStatedPrice(transcript, playerMessage, actor.offer) ||
+      (actorLib.numberOrNull(state.pending_confirmation) !== null &&
+        actorLib.numberOrNull(state.pending_confirmation) === actorLib.numberOrNull(actor.offer));
+
+    if (floorOk && playerAgreed) {
       accepted = true;
+    } else if (floorOk && !playerAgreed) {
+      // The actor tried to close at a price the player never stated or
+      // confirmed. Convert the close into an explicit proposal: the deal
+      // can only complete on the player's next turn, after they have seen
+      // and answered the "deal at X?" question.
+      action = "continue";
+      pendingConfirmation = actorLib.numberOrNull(actor.offer);
     } else {
       action = "continue";
     }
@@ -106,6 +120,9 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     current_ask: nextAsk,
     mood: actor.mood,
   };
+  if (pendingConfirmation !== null) {
+    state.pending_confirmation = pendingConfirmation;
+  }
 
   transcript.push({ role: "player", message: playerMessage });
   transcript.push({ role: "actor", message: actor.reply, action: action, offer: actor.offer, mood: actor.mood });
