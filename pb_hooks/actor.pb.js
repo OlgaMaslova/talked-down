@@ -79,10 +79,20 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   var isNonPrice = spec.frame === "non_price";
 
   if (action === "accept" && isNonPrice) {
-    // Non-price scenario: no numeric offer to validate. Close only after an
-    // explicit confirmation turn: the first accept becomes a proposal the
-    // player must answer; the next accept (with the proposal pending) closes.
-    if (state.pending_confirmation === "terms") {
+    // Non-price scenario: no numeric offer to validate. Close when the player
+    // has already seen and answered a question: either a pending server-side
+    // proposal, or the actor's immediately previous message asked the player
+    // something (e.g. "Do you agree to these terms?") and this turn is the
+    // player's answer. Otherwise the accept becomes an explicit proposal.
+    var lastActorMessage = "";
+    for (var ti = transcript.length - 1; ti >= 0; ti--) {
+      if (transcript[ti] && transcript[ti].role === "actor") {
+        lastActorMessage = String(transcript[ti].message || "");
+        break;
+      }
+    }
+    var actorJustAsked = /\?\s*$/.test(lastActorMessage);
+    if (state.pending_confirmation === "terms" || actorJustAsked) {
       accepted = true;
     } else {
       action = "continue";

@@ -57,9 +57,10 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-function formatAsk(value: number, currency: string): string {
+function formatAsk(value: number, currency: string | null): string {
   const rounded = Math.round(value);
-  const symbol = currency.trim();
+  const symbol = (currency ?? '').trim();
+  if (!symbol) return rounded.toLocaleString();
   const isPrefixSymbol = symbol.length <= 2 && /[^a-zA-Z0-9\s]/.test(symbol);
   return isPrefixSymbol ? `${symbol}${rounded.toLocaleString()}` : `${rounded.toLocaleString()} ${symbol}`;
 }
@@ -241,7 +242,7 @@ interface GameContext {
   characterPersona: string;
   playerBrief?: string | null;
   openingMessage: string;
-  currency: string;
+  currency: string | null;
   maxPatience: number;
   showAsk: boolean;
   engine: NegotiationEngine;
@@ -332,7 +333,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
       <div class="end-card">
         <div class="end-result">
           <p class="end-outcome ${outcome === 'deal' ? 'deal' : 'no-deal'}">
-            ${outcome === 'deal' ? `🤝 Deal at ${formatAsk(turn.dealPrice ?? 0, ctx.currency)}` : '💥 No Deal'}
+            ${outcome === 'deal' ? (turn.dealPrice != null ? `🤝 Deal at ${formatAsk(turn.dealPrice, ctx.currency)}` : '🤝 Deal!') : '💥 No Deal'}
           </p>
           <p class="end-detail">${outcome === 'deal' ? `Closed in ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}` : `Walked away after ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}`}</p>
         </div>

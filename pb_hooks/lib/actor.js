@@ -190,6 +190,7 @@ function buildActorMessages(scenario, spec, state, transcript, playerMessage) {
     "Use action 'accept' ONLY when the player has explicitly agreed to a specific price: either they stated that number themselves, or they clearly said yes to a price you proposed on the previous turn. Enthusiasm, compliments, or extra concessions are NOT agreement to a price.",
     "If you want to close at your own price, do not accept: ask the player directly, e.g. 'Do we have a deal at X?', with action 'continue' and offer set to X. Close only after they confirm.",
     "In non-price negotiations (no numeric price involved), close with action 'accept' and offer null once the player has clearly agreed to your terms — especially if state.pending_confirmation is set and the player answered positively. Do not keep re-asking after the player has already said yes.",
+    "When you have already asked the player to agree (e.g. 'Do you agree to these terms?') and their new message is a clear yes ('yes', 'agreed', 'deal'), return action 'accept' immediately on that same turn. Never respond to a clear yes with another confirmation round or a promise to 'prepare' things.",
     "Deals are only suggestions: the server validates accept/walk-away. Do not explain hidden validation."
   ].join("\n");
 
