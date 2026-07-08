@@ -463,7 +463,7 @@ function generateScenarioWithRetries(app, targetDate, cycle) {
     try {
       var raw = openai.chatJSON(
         buildGenerationMessages(targetDate, recent, attempt, cycle),
-        { temperature: 0.95, timeout: 60, context: "scenario_generation" }
+        { temperature: 0.95, timeout: 60, context: "scenario_generation", model: env("PLAYWRIGHT_MODEL") || null }
       );
       return normalizeAndValidateGenerated(raw, recent);
     } catch (err) {
