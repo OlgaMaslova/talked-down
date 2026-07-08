@@ -16,12 +16,13 @@ routerAdd("POST", "/api/admin/run-playwright", function(e) {
 
   var body = playwright.getBody(e);
   var targetDate = body && body.date ? String(body.date) : playwright.tomorrowUTC();
+  var force = !!(body && body.force);
   if (!playwright.validDateString(targetDate)) {
     return e.json(400, { error: "invalid_date" });
   }
 
   try {
-    var result = playwright.runPlaywrightPipeline(e.app, targetDate, "manual");
+    var result = playwright.runPlaywrightPipeline(e.app, targetDate, "manual", force);
     return e.json(200, result);
   } catch (err) {
     playwright.logError(e.app, "manual playwright route failed for " + targetDate + ": " + err.message);

@@ -239,9 +239,10 @@ function generatedScenarioSystemPrompt() {
     "Levers must rotate and sometimes INVERT expectations: e.g. character punishes flattery, wastes messages, respects bluntness, rewards silence/walkaway, or dislikes over-empathy. Never reuse the same solution.",
     "You may theme around season, holidays, or big cultural moments, but ONLY through archetypes such as 'the superstar striker on the eve of the final'. Never name real people, brands, franchises, teams, leagues, trademarked events, or copyrighted settings.",
     "Hidden parameters must explain how concessions are earned, what warms the character up, and what makes them walk away.",
+    "public.character_persona must be a SHORT NEUTRAL surface description only: identity, age, role, appearance, setting (e.g. 'a middle-aged Polish market vendor'). It must contain ZERO hints about behavior, temperament, likes/dislikes, patience, what works on them, or negotiation style — all of that belongs ONLY in secret.levers and secret.actor_notes. If a phrase would help a player guess a lever ('no patience for flattery', 'respects bluntness'), it must NOT appear in any public field.",
     "Return JSON only with this exact top-level shape: {\"public\":{\"title\":string,\"character_name\":string,\"character_persona\":string,\"opening_message\":string},\"secret\":{\"frame\":\"buy\"|\"sell\"|\"defend\"|\"multi_issue\"|\"non_price\",\"direction\":\"buy\"|\"sell\"|null,\"item\":string,\"objective\":string,\"currency\":string|null,\"opening_price\":number|null,\"floor_price\":number|null,\"fair_price\":number|null,\"patience\":integer,\"max_turns\":integer,\"levers\":{\"rewards\":string[],\"punishes\":string[]},\"concession_style\":string,\"actor_notes\":string,\"scoring_config\":{\"max_score\":100,\"price_weight\":number,\"patience_weight\":number,\"turns_weight\":number}}}.",
     "For price scenarios: use positive numeric prices. If direction='sell', require 0 < floor_price <= fair_price <= opening_price. If direction='buy', require 0 < opening_price <= fair_price <= floor_price. For non_price, use null currency/opening_price/floor_price/fair_price and direction=null.",
-    "Keep public fields concise: title <=160 chars, character_name <=80, character_persona <=500, opening_message <=1000."
+    "Keep public fields concise: title <=160 chars, character_name <=80, character_persona <=200, opening_message <=1000."
   ].join("\n");
 }
 
@@ -299,7 +300,14 @@ function normalizeAndValidateGenerated(raw, recent) {
   if (!pub.opening_message) { errors.push("public.opening_message required"); }
   if (pub.title.length > 160) { errors.push("public.title too long"); }
   if (pub.character_name.length > 80) { errors.push("public.character_name too long"); }
-  if (pub.character_persona.length > 500) { errors.push("public.character_persona too long"); }
+  if (pub.character_persona.length > 200) { errors.push("public.character_persona too long (must be a short neutral description)"); }
+  var leverTellPatterns = [/no patience/i, /little patience/i, /patien(ce|t)/i, /flatter/i, /respects?\s+(bluntness|directness|honesty|silence)/i, /responds well to/i, /values\s+genuine/i, /dislikes?/i, /hates?/i, /rewards?\s/i, /punish/i, /warms? up/i, /no[- ]nonsense/i, /walk(s)? away/i];
+  for (var lt = 0; lt < leverTellPatterns.length; lt++) {
+    if (leverTellPatterns[lt].test(pub.character_persona)) {
+      errors.push("public.character_persona contains a behavioral hint (" + String(leverTellPatterns[lt]) + "); persona must be a neutral surface description only");
+      break;
+    }
+  }
   if (pub.opening_message.length > 1000) { errors.push("public.opening_message too long"); }
 
   var publicText = [pub.title, pub.character_name, pub.character_persona, pub.opening_message].join("\n");
@@ -784,13 +792,13 @@ function saveSecurityReport(app, secretRecord, report) {
   app.save(secretRecord);
 }
 
-function runPlaywrightPipeline(app, targetDate, source) {
+function runPlaywrightPipeline(app, targetDate, source, force) {
   if (!validDateString(targetDate)) {
     throw new Error("invalid target date: " + targetDate);
   }
 
   var existing = findPublishedScenarioForDate(app, targetDate);
-  if (existing) {
+  if (existing && !force) {
     logInfo(app, "nightly_playwright skipped for " + targetDate + ": published scenario already exists (" + existing.id + ")");
     return { status: "skipped", reason: "published_exists", scenario_id: existing.id, date: targetDate };
   }
@@ -821,10 +829,23 @@ function runPlaywrightPipeline(app, targetDate, source) {
     saveSecurityReport(app, created.secretRecord, report);
 
     if (report.passed) {
+      var replacedId = null;
+      if (existing) {
+        try {
+          existing.set("status", "retired");
+          app.save(existing);
+          replacedId = existing.id;
+          logInfo(app, "nightly_playwright retired replaced scenario " + replacedId + " for " + targetDate + " (force)");
+        } catch (retireErr) {
+          logError(app, "nightly_playwright failed to retire replaced scenario " + existing.id + ": " + retireErr.message);
+        }
+      }
       created.scenario.set("status", "published");
       app.save(created.scenario);
       logInfo(app, "nightly_playwright published scenario " + created.scenario.id + " for " + targetDate);
-      return { status: "published", scenario_id: created.scenario.id, date: targetDate, attempts: cycle };
+      var result = { status: "published", scenario_id: created.scenario.id, date: targetDate, attempts: cycle };
+      if (replacedId) { result.replaced_scenario_id = replacedId; }
+      return result;
     }
 
     lastFailedDraft = created.scenario;
