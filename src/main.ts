@@ -25,6 +25,7 @@ const DEFAULT_MAX_MESSAGE_CHARS = 280;
 
 interface SessionStartLlm {
   llm: true;
+  already_played?: false;
   session_token: string;
   scenario: LlmScenario;
 }
@@ -33,7 +34,22 @@ interface SessionStartNoLlm {
   llm: false;
 }
 
-type SessionStartResponse = SessionStartLlm | SessionStartNoLlm;
+/** Returned by session/start when this device already finished today's game. */
+interface SessionStartAlreadyPlayed {
+  llm: true;
+  already_played: true;
+  result: {
+    score: number;
+    result_label: string;
+    outcome: string; // "deal" | "no_deal"
+    turns: number;
+    percentile: number;
+    day_number: number;
+    streak: number;
+  };
+}
+
+type SessionStartResponse = SessionStartLlm | SessionStartAlreadyPlayed | SessionStartNoLlm;
 
 const EPOCH_MS = Date.UTC(2026, 6, 7); // 2026-07-07T00:00:00Z is day #1
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -76,6 +92,13 @@ function updateStreak(dayNumber: number): number {
   return streak;
 }
 
+/** Reads the locally-tracked streak without mutating it (used for already-played renders). */
+function getStoredStreak(): number {
+  const raw = localStorage.getItem(STREAK_COUNT_KEY);
+  const n = raw !== null ? parseInt(raw, 10) : 0;
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /**
  * Calls the backend's session/start route. Returns null when the call fails
  * outright (network error, non-2xx, unexpected shape) so the caller can show
@@ -90,6 +113,9 @@ async function startBackendSession(identity: DeviceIdentity): Promise<SessionSta
     });
     if (!res.ok) return null;
     const data = await res.json();
+    if (data && data.llm === true && data.already_played === true && data.result) {
+      return data as SessionStartAlreadyPlayed;
+    }
     if (data && data.llm === true && data.session_token && data.scenario) {
       return data as SessionStartLlm;
     }
@@ -532,6 +558,97 @@ function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: num
   });
 }
 
+/**
+ * Renders the same end-card layout used at the end of a live game, but for
+ * a device that already finished today's negotiation: the result comes
+ * straight from session/start instead of a just-completed CharacterTurn, so
+ * there is no dealPrice and the streak must not be bumped again.
+ */
+function renderAlreadyPlayed(
+  root: HTMLElement,
+  result: SessionStartAlreadyPlayed['result'],
+  dayNumber: number,
+  identity: DeviceIdentity,
+): void {
+  const outcome: 'deal' | 'no_deal' = result.outcome === 'deal' ? 'deal' : 'no_deal';
+  const effectiveDay = result.day_number || dayNumber;
+  const streak = result.streak && result.streak > 0 ? result.streak : getStoredStreak();
+
+  root.innerHTML = `
+    <div class="game">
+      <header class="game-header">
+        <span class="day-badge">Talked Down #${effectiveDay}</span>
+        <h1 class="scenario-title">You\u2019ve already played today\u2019s negotiation.</h1>
+      </header>
+      <div class="end-panel" id="end-panel">
+        <div class="end-card">
+          <div class="end-result">
+            <p class="end-outcome ${outcome === 'deal' ? 'deal' : 'no-deal'}">
+              ${outcome === 'deal' ? '\ud83e\udd1d Deal!' : '\ud83d\udca5 No Deal'}
+            </p>
+            <p class="end-detail">${outcome === 'deal' ? `Closed in ${result.turns} turn${result.turns === 1 ? '' : 's'}` : `Walked away after ${result.turns} turn${result.turns === 1 ? '' : 's'}`}</p>
+          </div>
+          <div class="end-score">
+            <div class="end-score-number">${result.score}/100</div>
+            <div class="end-score-label">${escapeHtml(result.result_label)}</div>
+          </div>
+          <div class="end-percentile" id="end-percentile">You scored better than <strong>${result.percentile}%</strong> of today\u2019s negotiators</div>
+          <div class="end-meta">
+            <span class="handle-badge" title="Your handle on this device">\ud83c\udfad ${escapeHtml(identity.handle)}</span>
+            <span class="streak-badge">\ud83d\udd25 ${streak} day streak</span>
+          </div>
+          <div class="history-box" id="history-box"></div>
+          <div class="share-card" id="share-card"></div>
+          <div class="end-actions">
+            <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
+          </div>
+          <div class="countdown-box">
+            Next negotiation in
+            <span class="countdown-value" id="countdown-value">--:--:--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const shareText = buildShareText(effectiveDay, outcome, result.turns, result.score);
+  const shareCard = root.querySelector<HTMLElement>('#share-card');
+  if (shareCard) shareCard.textContent = shareText;
+
+  const copyBtn = root.querySelector<HTMLButtonElement>('#copy-btn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      void copyToClipboard(shareText).then((ok) => {
+        if (ok) {
+          copyBtn.textContent = 'Copied!';
+          copyBtn.classList.add('copied');
+          window.setTimeout(() => {
+            copyBtn.textContent = 'Copy result';
+            copyBtn.classList.remove('copied');
+          }, 1800);
+        }
+      });
+    });
+  }
+
+  const countdownEl = root.querySelector<HTMLElement>('#countdown-value');
+  if (countdownEl) startCountdown(countdownEl);
+
+  const historyBox = root.querySelector<HTMLElement>('#history-box');
+  if (historyBox) {
+    void fetchHistory(identity.deviceId).then((items) => {
+      if (items.length === 0) return;
+      const rows = items
+        .map((h) => {
+          const day = h.day_number ? `#${h.day_number}` : new Date(h.created).toISOString().slice(5, 10);
+          return `<li><span class="history-day">${escapeHtml(String(day))}</span><span class="history-label">${escapeHtml(h.result_label)}</span><span class="history-score">${h.score}/100</span></li>`;
+        })
+        .join('');
+      historyBox.innerHTML = `<div class="history-title">Your recent negotiations</div><ul class="history-list">${rows}</ul>`;
+    });
+  }
+}
+
 async function main(): Promise<void> {
   const root = document.querySelector('#app');
   if (!(root instanceof HTMLElement)) return;
@@ -539,9 +656,14 @@ async function main(): Promise<void> {
   root.innerHTML = '<div class="loading">Loading today\u2019s negotiation…</div>';
 
   const dayNumber = getDayNumber();
+  const identity = getIdentity();
 
-  const session = await startBackendSession(getIdentity());
+  const session = await startBackendSession(identity);
   if (session && session.llm === true) {
+    if ('already_played' in session && session.already_played) {
+      renderAlreadyPlayed(root, session.result, dayNumber, identity);
+      return;
+    }
     loadLlmGame(root, session, dayNumber);
     return;
   }

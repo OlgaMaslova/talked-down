@@ -463,6 +463,123 @@ function currentDayNumber() {
   return Math.floor((Date.now() - DAY_ONE_UTC_MS) / 86400000) + 1;
 }
 
+function findTodaysScoreForDevice(app, deviceId) {
+  deviceId = String(deviceId || "").slice(0, 64);
+  if (!deviceId) {
+    return null;
+  }
+
+  try {
+    var dayNumber = currentDayNumber();
+    try {
+      var records = app.findRecordsByFilter(
+        "scores",
+        "day = {:day} && device_id = {:device}",
+        "",
+        1,
+        0,
+        { day: dayNumber, device: deviceId }
+      );
+      if (records && records.length) {
+        return records[0];
+      }
+    } catch (dayErr) {}
+
+    try {
+      var dayNumberRecords = app.findRecordsByFilter(
+        "scores",
+        "day_number = {:day} && device_id = {:device}",
+        "",
+        1,
+        0,
+        { day: dayNumber, device: deviceId }
+      );
+      if (dayNumberRecords && dayNumberRecords.length) {
+        return dayNumberRecords[0];
+      }
+    } catch (dayNumberErr) {}
+
+    try {
+      var dateRecords = app.findRecordsByFilter(
+        "scores",
+        "day = {:day} && device_id = {:device}",
+        "",
+        1,
+        0,
+        { day: todayUTC(), device: deviceId }
+      );
+      if (dateRecords && dateRecords.length) {
+        return dateRecords[0];
+      }
+    } catch (dateErr) {}
+  } catch (err) {}
+
+  return null;
+}
+
+function scoreRecordDayNumber(record) {
+  var raw = "";
+  try {
+    raw = record.getString("day");
+  } catch (rawErr) {}
+
+  try {
+    var day = record.getInt("day");
+    if (day > 0 && (!raw || /^[0-9]+$/.test(raw))) {
+      return day;
+    }
+  } catch (dayErr) {}
+
+  try {
+    var dayNumber = record.getInt("day_number");
+    if (dayNumber > 0) {
+      return dayNumber;
+    }
+  } catch (dayNumberErr) {}
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    var parts = raw.split("-");
+    var ms = Date.UTC(intOrDefault(parts[0], 0), intOrDefault(parts[1], 1) - 1, intOrDefault(parts[2], 1));
+    return Math.floor((ms - DAY_ONE_UTC_MS) / 86400000) + 1;
+  }
+
+  return 0;
+}
+
+function computeStreakForDevice(app, deviceId) {
+  deviceId = String(deviceId || "").slice(0, 64);
+  if (!deviceId) {
+    return 0;
+  }
+
+  try {
+    var records = app.findRecordsByFilter(
+      "scores",
+      "device_id = {:device}",
+      "-day",
+      60,
+      0,
+      { device: deviceId }
+    );
+    var days = {};
+    for (var i = 0; i < records.length; i++) {
+      var day = scoreRecordDayNumber(records[i]);
+      if (day > 0) {
+        days[day] = true;
+      }
+    }
+
+    var streak = 0;
+    var today = currentDayNumber();
+    while (days[today - streak]) {
+      streak++;
+    }
+    return streak;
+  } catch (err) {
+    return 0;
+  }
+}
+
 function saveServerScoreBestEffort(app, scenario, spec, outcome, dealPrice, turnsUsed, patienceLeft, sessionToken, sessionState) {
   var result = computeServerScore(spec, outcome, dealPrice, turnsUsed, patienceLeft);
   var day = todayUTC();
@@ -563,6 +680,9 @@ module.exports = {
   logIncident: logIncident,
   scriptedFallbackLine: scriptedFallbackLine,
   computeServerScore: computeServerScore,
+  currentDayNumber: currentDayNumber,
+  findTodaysScoreForDevice: findTodaysScoreForDevice,
+  computeStreakForDevice: computeStreakForDevice,
   saveServerScoreBestEffort: saveServerScoreBestEffort,
   runNotaryBestEffort: runNotaryBestEffort,
   getJSONField: getJSONField,

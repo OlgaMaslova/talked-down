@@ -16,6 +16,25 @@ routerAdd("POST", "/api/game/session/start", (e) => {
 
   var spec = actorLib.getJSONField(secretRecord, "secret_spec", {});
   var startBody = e.requestInfo().body || {};
+  var deviceId = String(startBody.device_id || "").slice(0, 64);
+  if (deviceId) {
+    var sc = actorLib.findTodaysScoreForDevice(e.app, deviceId);
+    if (sc) {
+      return e.json(200, {
+        llm: true,
+        already_played: true,
+        result: {
+          score: sc.getInt("score"),
+          result_label: sc.getString("result_label"),
+          outcome: sc.getString("outcome"),
+          turns: sc.getInt("turns"),
+          percentile: sc.getInt("percentile"),
+          day_number: sc.getInt("day_number") || actorLib.currentDayNumber(),
+          streak: actorLib.computeStreakForDevice(e.app, deviceId),
+        },
+      });
+    }
+  }
   var created = actorLib.newSessionRecord(e.app, scenario, spec, {
     device_id: startBody.device_id,
     handle: startBody.handle,
