@@ -42,8 +42,26 @@ var PRICING_PER_MTOK = {
   "gpt-4o-mini": [0.15, 0.6, 0.075],
 };
 
+function resolveRates(model) {
+  if (!model) {
+    return null;
+  }
+  if (PRICING_PER_MTOK[model]) {
+    return PRICING_PER_MTOK[model];
+  }
+  // OpenAI responses return versioned names like "gpt-4.1-mini-2025-04-14";
+  // match the longest known prefix so those still price correctly.
+  var bestKey = null;
+  for (var key in PRICING_PER_MTOK) {
+    if (model.indexOf(key + "-") === 0 && (!bestKey || key.length > bestKey.length)) {
+      bestKey = key;
+    }
+  }
+  return bestKey ? PRICING_PER_MTOK[bestKey] : null;
+}
+
 function computeCostUSD(model, promptTokens, completionTokens, cachedTokens) {
-  var rates = PRICING_PER_MTOK[model];
+  var rates = resolveRates(model);
   if (!rates) {
     return 0;
   }
