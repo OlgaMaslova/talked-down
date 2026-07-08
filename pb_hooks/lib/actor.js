@@ -63,6 +63,20 @@ function clamp(value, min, max) {
   return n;
 }
 
+function clamp01(value) {
+  var n = Number(value);
+  if (isNaN(n) || !isFinite(n)) {
+    return 0;
+  }
+  if (n < 0) {
+    return 0;
+  }
+  if (n > 1) {
+    return 1;
+  }
+  return n;
+}
+
 function getJSONField(record, fieldName, fallback) {
   // Prefer the raw string form: PocketBase JSON fields round-trip reliably
   // as JSON strings, while goja-wrapped objects can fail save validation.
@@ -122,16 +136,50 @@ function findSecretForScenario(app, scenarioId) {
   );
 }
 
-function newSessionRecord(app, scenario, spec) {
+function logIncident(app, sessionToken, type, details) {
+  try {
+    var targetApp = app || $app;
+    var collection = targetApp.findCollectionByNameOrId("incidents");
+    var record = new Record(collection);
+    record.set("session", String(sessionToken || "").slice(0, 64));
+    record.set("type", String(type || "unknown").slice(0, 64));
+    record.set("details", JSON.stringify(details || {}));
+    targetApp.save(record);
+  } catch (err) {
+    try {
+      console.log("incident_log_failed: " + err.message);
+    } catch (ignored) {}
+  }
+}
+
+var SCRIPTED_FALLBACK_LINES = [
+  "Hm. Give me a second… say that again?",
+  "Hold on—my thoughts wandered. Run that by me once more?",
+  "Wait, wait. I need a breath. Say it again?"
+];
+
+function scriptedFallbackLine(sessionToken, turn) {
+  var seed = intOrDefault(turn, 0);
+  var text = String(sessionToken || "");
+  for (var i = 0; i < text.length; i++) {
+    seed = (seed + (text.charCodeAt(i) * (i + 1))) % 2147483647;
+  }
+  return SCRIPTED_FALLBACK_LINES[seed % SCRIPTED_FALLBACK_LINES.length];
+}
+
+function newSessionRecord(app, scenario, spec, identity) {
   var sessionsCollection = app.findCollectionByNameOrId("sessions");
   var record = new Record(sessionsCollection);
   var token = randomHex32();
   var patience = intOrDefault(spec.patience, 10);
+  identity = identity || {};
   var state = {
     patience: patience,
     turns: 0,
     current_ask: numberOrNull(spec.opening_price),
     mood: "neutral",
+    device_id: String(identity.device_id || "").slice(0, 64),
+    handle: String(identity.handle || "").slice(0, 40),
   };
 
   record.set("scenario", scenario.id);
@@ -316,6 +364,128 @@ function responseState(state) {
   };
 }
 
+function serverScoreLabel(score) {
+  if (score >= 85) {
+    return "Master Negotiator";
+  }
+  if (score >= 65) {
+    return "Smooth Talker";
+  }
+  if (score >= 40) {
+    return "Fair Dealer";
+  }
+  if (score > 0) {
+    return "Paid Too Much";
+  }
+  return "No Deal";
+}
+
+function computeServerScore(spec, outcome, dealPrice, turnsUsed, patienceLeft) {
+  spec = spec || {};
+  if (outcome !== "deal") {
+    return { score: 0, label: "No Deal" };
+  }
+
+  var direction = spec.direction || directionFromFrame(spec.frame);
+  var openingPrice = numberOrNull(spec.opening_price);
+  var floorPrice = numberOrNull(spec.floor_price);
+  var price = numberOrNull(dealPrice);
+  var priceFraction = 0.6;
+
+  if (spec.frame !== "non_price" && price !== null && openingPrice !== null && floorPrice !== null && openingPrice !== floorPrice) {
+    if (direction === "buy") {
+      priceFraction = clamp01((openingPrice - price) / (openingPrice - floorPrice));
+    } else if (direction === "sell") {
+      priceFraction = clamp01((price - openingPrice) / (floorPrice - openingPrice));
+    }
+  }
+
+  var maxTurns = intOrDefault(spec.max_turns, 10);
+  var initialPatience = intOrDefault(spec.patience, 10);
+  var turnsFraction = clamp01(1 - ((intOrDefault(turnsUsed, 0) - 1) / Math.max(1, maxTurns - 1)));
+  var patienceNumber = numberOrNull(patienceLeft);
+  if (patienceNumber === null) {
+    patienceNumber = 0;
+  }
+  var patienceFraction = initialPatience > 0 ? clamp01(patienceNumber / initialPatience) : 0;
+  var score = Math.round(100 * ((0.6 * priceFraction) + (0.2 * turnsFraction) + (0.2 * patienceFraction)));
+  if (score < 0) {
+    score = 0;
+  }
+  if (score > 100) {
+    score = 100;
+  }
+  return { score: score, label: serverScoreLabel(score) };
+}
+
+function scenarioDayIndex(scenario) {
+  try {
+    var n = scenario.getInt("day_index");
+    if (!isNaN(n) && isFinite(n)) {
+      return n;
+    }
+  } catch (err) {}
+  return 0;
+}
+
+var DAY_ONE_UTC_MS = Date.UTC(2026, 6, 7); // 2026-07-07T00:00:00Z is day #1
+
+function currentDayNumber() {
+  return Math.floor((Date.now() - DAY_ONE_UTC_MS) / 86400000) + 1;
+}
+
+function saveServerScoreBestEffort(app, scenario, spec, outcome, dealPrice, turnsUsed, patienceLeft, sessionToken, sessionState) {
+  var result = computeServerScore(spec, outcome, dealPrice, turnsUsed, patienceLeft);
+  var day = todayUTC();
+  sessionState = sessionState || {};
+  result.percentile = 0;
+
+  try {
+    var existing = [];
+    try {
+      existing = app.findRecordsByFilter("scores", "day = {:day}", "", 0, 0, { day: day });
+    } catch (findErr) {
+      existing = [];
+    }
+
+    var below = 0;
+    for (var i = 0; i < existing.length; i++) {
+      if (existing[i].getInt("score") < result.score) {
+        below++;
+      }
+    }
+    result.percentile = Math.round(100 * below / Math.max(1, existing.length + 1));
+
+    var collection = app.findCollectionByNameOrId("scores");
+    var record = new Record(collection);
+    record.set("day_index", scenarioDayIndex(scenario));
+    record.set("day", day);
+    record.set("score", result.score);
+    record.set("turns", intOrDefault(turnsUsed, 0));
+    record.set("result_label", result.label);
+    record.set("outcome", String(outcome || ""));
+    record.set("percentile", result.percentile);
+    record.set("day_number", currentDayNumber());
+    if (sessionState.device_id) {
+      record.set("device_id", String(sessionState.device_id).slice(0, 64));
+    }
+    if (sessionState.handle) {
+      record.set("handle", String(sessionState.handle).slice(0, 40));
+    }
+    app.save(record);
+  } catch (err) {
+    console.log("scoring_failed: " + err.message);
+    logIncident(app, sessionToken, "scoring_failed", {
+      error: err.message,
+      outcome: outcome,
+      score: result.score,
+      turn: intOrDefault(turnsUsed, 0),
+    });
+  }
+
+  return result;
+}
+
 function buildNotaryMessages(transcript) {
   var system = [
     "You are a NOTARY. Extract only what was agreed from the negotiation transcript.",
@@ -332,6 +502,7 @@ function runNotaryBestEffort(sessionRecord, transcript) {
   try {
     var agreement = openai.chatJSON(buildNotaryMessages(transcript), { temperature: 0, context: "notary" });
     if (!agreement || typeof agreement !== "object") {
+      logIncident($app, sessionRecord.getString("token"), "notary_unavailable", { error: "invalid_notary_response" });
       return;
     }
     sessionRecord.set("agreement", JSON.stringify({
@@ -344,6 +515,7 @@ function runNotaryBestEffort(sessionRecord, transcript) {
   } catch (err) {
     // Best effort only: notary extraction must never break the turn response.
     console.log("notary_unavailable: " + err.message);
+    logIncident($app, sessionRecord.getString("token"), "notary_unavailable", { error: err.message });
   }
 }
 
@@ -358,6 +530,10 @@ module.exports = {
   cleanActorResult: cleanActorResult,
   dealRespectsFloor: dealRespectsFloor,
   responseState: responseState,
+  logIncident: logIncident,
+  scriptedFallbackLine: scriptedFallbackLine,
+  computeServerScore: computeServerScore,
+  saveServerScoreBestEffort: saveServerScoreBestEffort,
   runNotaryBestEffort: runNotaryBestEffort,
   getJSONField: getJSONField,
   intOrDefault: intOrDefault,

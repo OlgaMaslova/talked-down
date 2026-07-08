@@ -369,6 +369,12 @@ body {
   color: var(--accent-2);
 }
 
+.end-percentile {
+  font-size: 0.8rem;
+  margin-top: 0.3rem;
+  color: var(--text-dim);
+}
+
 .end-meta {
   display: flex;
   justify-content: space-between;

@@ -15,7 +15,11 @@ routerAdd("POST", "/api/game/session/start", (e) => {
   }
 
   var spec = actorLib.getJSONField(secretRecord, "secret_spec", {});
-  var created = actorLib.newSessionRecord(e.app, scenario, spec);
+  var startBody = e.requestInfo().body || {};
+  var created = actorLib.newSessionRecord(e.app, scenario, spec, {
+    device_id: startBody.device_id,
+    handle: startBody.handle,
+  });
   return e.json(200, {
     llm: true,
     session_token: created.token,
@@ -67,7 +71,12 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     ));
   } catch (err) {
     console.log("actor_unavailable: " + err.message);
-    return e.json(502, { error: "actor_unavailable" });
+    actorLib.logIncident(e.app, token, "actor_unavailable", { error: err.message, turn: currentTurns });
+    return e.json(200, {
+      message: actorLib.scriptedFallbackLine(token, currentTurns),
+      done: false,
+      state: actorLib.responseState(state),
+    });
   }
 
   var nextTurns = currentTurns + 1;
@@ -108,6 +117,12 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     if (floorOk && playerAgreed) {
       accepted = true;
     } else if (floorOk && !playerAgreed) {
+      actorLib.logIncident(e.app, token, "invalid_accept_unconfirmed", {
+        offer: actor.offer,
+        floor_ok: floorOk,
+        player_agreed: playerAgreed,
+        turn: currentTurns,
+      });
       // The actor tried to close at a price the player never stated or
       // confirmed. Convert the close into an explicit proposal: the deal
       // can only complete on the player's next turn, after they have seen
@@ -115,6 +130,12 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
       action = "continue";
       pendingConfirmation = actorLib.numberOrNull(actor.offer);
     } else {
+      actorLib.logIncident(e.app, token, "invalid_accept_floor", {
+        offer: actor.offer,
+        floor_ok: floorOk,
+        player_agreed: playerAgreed,
+        turn: currentTurns,
+      });
       action = "continue";
     }
   }
@@ -136,11 +157,15 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   }
 
   var nextAsk = actor.offer !== null ? actor.offer : actorLib.numberOrNull(state.current_ask);
+  var priorDeviceId = state.device_id;
+  var priorHandle = state.handle;
   state = {
     patience: nextPatience,
     turns: nextTurns,
     current_ask: nextAsk,
     mood: actor.mood,
+    device_id: priorDeviceId,
+    handle: priorHandle,
   };
   if (pendingConfirmation !== null) {
     state.pending_confirmation = pendingConfirmation;
@@ -154,8 +179,10 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   session.set("status", status);
   e.app.save(session);
 
+  var scoreResult = null;
   if (done) {
     actorLib.runNotaryBestEffort(session, transcript);
+    scoreResult = actorLib.saveServerScoreBestEffort(e.app, scenario, spec, outcome, dealPrice, nextTurns, nextPatience, token, state);
   }
 
   var response = {
@@ -167,6 +194,11 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     response.outcome = outcome;
     if (outcome === "deal" && dealPrice !== null) {
       response.dealPrice = dealPrice;
+    }
+    if (scoreResult) {
+      response.score = scoreResult.score;
+      response.label = scoreResult.label;
+      response.percentile = scoreResult.percentile;
     }
   }
 

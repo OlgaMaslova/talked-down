@@ -51,6 +51,10 @@ export interface CharacterTurn {
   outcome?: 'deal' | 'no_deal';
   dealPrice?: number;
   state: CharacterTurnState;
+  /** Present when done=true: server-computed final score/label/percentile. */
+  score?: number;
+  label?: string;
+  percentile?: number;
 }
 
 /** Contract any negotiation "brain" (rule-based today, LLM-based later) must implement. */

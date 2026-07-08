@@ -1,20 +1,9 @@
 import './styles.css';
 import { pb, apiBaseUrl } from './pocketbase';
-import { createRuleEngine, type CharacterTurn, type CharacterTurnState, type EngineConfig, type NegotiationEngine } from './engine';
+import type { CharacterTurn, CharacterTurnState, NegotiationEngine } from './engine';
 import { createLlmEngine } from './llmEngine';
-import { computeScore, type ScoringConfig, type ScoreResult } from './scoring';
+import type { ScoreResult } from './scoring';
 import { getIdentity, type DeviceIdentity } from './identity';
-
-interface ScenarioRecord {
-  id: string;
-  day_index: number;
-  title: string;
-  character_name: string;
-  character_persona: string;
-  opening_message: string;
-  engine_config: EngineConfig;
-  scoring_config: ScoringConfig;
-}
 
 /** Public fields of an LLM-generated scenario, as returned by session/start. */
 interface LlmScenario {
@@ -45,10 +34,6 @@ const EPOCH_MS = Date.UTC(2026, 6, 7); // 2026-07-07T00:00:00Z is day #1
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STREAK_LAST_DAY_KEY = 'td_last_day';
 const STREAK_COUNT_KEY = 'td_streak';
-
-function safeMod(n: number, m: number): number {
-  return ((n % m) + m) % m;
-}
 
 function getDayNumber(): number {
   return Math.floor((Date.now() - EPOCH_MS) / DAY_MS) + 1;
@@ -86,22 +71,17 @@ function updateStreak(dayNumber: number): number {
   return streak;
 }
 
-async function fetchTodayScenario(dayNumber: number): Promise<ScenarioRecord> {
-  const dayIndex = safeMod(dayNumber - 1, 7);
-  return pb.collection('scenarios').getFirstListItem<ScenarioRecord>(`day_index=${dayIndex}`);
-}
-
 /**
  * Calls the backend's session/start route. Returns null when the call fails
- * outright (network error, non-2xx, unexpected shape) so callers can fall
- * back to the existing seeded rule-engine flow.
+ * outright (network error, non-2xx, unexpected shape) so the caller can show
+ * a graceful "come back later" message instead of a broken game.
  */
-async function startBackendSession(): Promise<SessionStartResponse | null> {
+async function startBackendSession(identity: DeviceIdentity): Promise<SessionStartResponse | null> {
   try {
     const res = await fetch(`${apiBaseUrl}/api/game/session/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ device_id: identity.deviceId, handle: identity.handle }),
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -114,38 +94,6 @@ async function startBackendSession(): Promise<SessionStartResponse | null> {
     return null;
   } catch {
     return null;
-  }
-}
-
-async function submitScore(
-  dayIndex: number,
-  dayNumber: number,
-  identity: DeviceIdentity,
-  score: number,
-  turns: number,
-  resultLabel: string,
-  scenarioId?: string,
-): Promise<void> {
-  const payload: Record<string, unknown> = {
-    day_index: dayIndex,
-    day_number: dayNumber,
-    device_id: identity.deviceId,
-    handle: identity.handle,
-    score,
-    turns,
-    result_label: resultLabel,
-  };
-  if (scenarioId) payload.scenario = scenarioId;
-  try {
-    await pb.collection('scores').create(payload);
-  } catch {
-    try {
-      const fallbackPayload: Record<string, unknown> = { score, turns, result_label: resultLabel };
-      if (scenarioId) fallbackPayload.scenario = scenarioId;
-      await pb.collection('scores').create(fallbackPayload);
-    } catch {
-      // Saving the score is best-effort; never let it break the game.
-    }
   }
 }
 
@@ -434,7 +382,10 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
     // Anonymous daily percentile vs today's score distribution (no signup).
     const percentileEl = endPanel.querySelector<HTMLElement>('#end-percentile');
-    if (percentileEl) {
+    if (percentileEl && typeof turn.percentile === 'number') {
+      // Server computed the daily percentile deterministically on the final turn.
+      percentileEl.innerHTML = `You scored better than <strong>${turn.percentile}%</strong> of today\u2019s negotiators`;
+    } else if (percentileEl) {
       percentileEl.textContent = 'Checking today\u2019s standings…';
       void scoreSaved.then(() => fetchPercentile(ctx.dayNumber, score)).then((p) => {
         if (!p) {
@@ -506,41 +457,6 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   });
 }
 
-async function loadRuleEngineGame(root: HTMLElement, dayNumber: number): Promise<void> {
-  let scenario: ScenarioRecord;
-  try {
-    scenario = await fetchTodayScenario(dayNumber);
-  } catch {
-    root.innerHTML = '<div class="error">Could not load today\u2019s negotiation. Please refresh to try again.</div>';
-    return;
-  }
-
-  const streak = updateStreak(dayNumber);
-  const identity = getIdentity();
-  const config = scenario.engine_config;
-  const scoringConfig = scenario.scoring_config;
-  const engine = createRuleEngine(config);
-  const initialTurn = engine.start();
-
-  renderGame(root, {
-    dayNumber,
-    streak,
-    identity,
-    title: scenario.title,
-    characterName: scenario.character_name,
-    characterPersona: scenario.character_persona,
-    openingMessage: scenario.opening_message,
-    currency: config.currency,
-    maxPatience: config.patience,
-    showAsk: true,
-    engine,
-    initialTurn,
-    scoreTurn: (turn) => computeScore(scoringConfig, config, turn.dealPrice, turn.state.turns, turn.state.patience),
-    recordScore: (score, label, turn) =>
-      submitScore(scenario.day_index, dayNumber, identity, score, turn.state.turns, label, scenario.id),
-  });
-}
-
 function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: number): void {
   const streak = updateStreak(dayNumber);
   const identity = getIdentity();
@@ -568,9 +484,13 @@ function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: num
     showAsk,
     engine,
     initialTurn,
-    scoreTurn: (turn) => computeLlmScore(turn, scenario.patience, scenario.max_turns),
-    recordScore: (score, label, turn) =>
-      submitScore(dayNumber, dayNumber, identity, score, turn.state.turns, label),
+    scoreTurn: (turn) =>
+      typeof turn.score === 'number' && typeof turn.label === 'string'
+        ? { score: turn.score, label: turn.label }
+        : computeLlmScore(turn, scenario.patience, scenario.max_turns),
+    // The server writes the score record itself once the session ends;
+    // nothing to do client-side.
+    recordScore: async () => {},
   });
 }
 
@@ -582,15 +502,16 @@ async function main(): Promise<void> {
 
   const dayNumber = getDayNumber();
 
-  const session = await startBackendSession();
+  const session = await startBackendSession(getIdentity());
   if (session && session.llm === true) {
     loadLlmGame(root, session, dayNumber);
     return;
   }
 
-  // session.llm === false, or the start call failed entirely: fall back to
-  // today's existing seeded rule-engine flow, unchanged.
-  await loadRuleEngineGame(root, dayNumber);
+  // session.llm === false, or the start call failed entirely: there is no
+  // more client-side rule-engine fallback (engine_config is no longer
+  // exposed by the API), so just tell the player to check back.
+  root.innerHTML = '<div class="error">Today\u2019s negotiation is being prepared. Check back soon.</div>';
 }
 
 void main();
