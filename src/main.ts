@@ -1,7 +1,7 @@
 import './styles.css';
 import { pb, apiBaseUrl } from './pocketbase';
 import type { CharacterTurn, CharacterTurnState, NegotiationEngine } from './engine';
-import { createLlmEngine } from './llmEngine';
+import { createLlmEngine, MessageTooLongError } from './llmEngine';
 import type { ScoreResult } from './scoring';
 import { getIdentity, type DeviceIdentity } from './identity';
 
@@ -15,8 +15,13 @@ interface LlmScenario {
   currency: string;
   patience: number;
   max_turns: number;
+  /** Per-message character cap enforced server-side on session/turn. */
+  max_message_chars?: number;
   current_ask: number | null;
 }
+
+/** Fallback used when a scenario payload lacks max_message_chars (older backend). */
+const DEFAULT_MAX_MESSAGE_CHARS = 280;
 
 interface SessionStartLlm {
   llm: true;
@@ -245,6 +250,8 @@ interface GameContext {
   openingMessage: string;
   currency: string | null;
   maxPatience: number;
+  maxTurns: number;
+  maxMessageChars: number;
   showAsk: boolean;
   engine: NegotiationEngine;
   initialTurn: CharacterTurn;
@@ -265,6 +272,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
         </div>
         ${ctx.playerBrief ? `<p class="player-brief">${escapeHtml(ctx.playerBrief)}</p>` : ''}
+        <p class="house-rules">📜 House rules: ${ctx.maxTurns} message${ctx.maxTurns === 1 ? '' : 's'} max, ${ctx.maxMessageChars} characters each.</p>
         ${
           ctx.showAsk
             ? `<div class="meters"><div class="ask-display">
@@ -276,8 +284,11 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
       </header>
       <div class="chat-log" id="chat-log"></div>
       <form class="input-row" id="input-row">
-        <input id="chat-input" type="text" placeholder="Type your offer or say something…" autocomplete="off" />
-        <button type="submit" id="send-btn">Send</button>
+        <div class="input-field">
+          <input id="chat-input" type="text" placeholder="Type your offer or say something…" autocomplete="off" maxlength="${ctx.maxMessageChars}" />
+          <span class="char-counter" id="char-counter">0/${ctx.maxMessageChars}</span>
+        </div>
+        <button type="submit" id="send-btn" disabled>Send</button>
       </form>
       <div class="end-panel hidden" id="end-panel"></div>
     </div>
@@ -287,12 +298,32 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const inputRow = root.querySelector<HTMLFormElement>('#input-row');
   const chatInput = root.querySelector<HTMLInputElement>('#chat-input');
   const sendBtn = root.querySelector<HTMLButtonElement>('#send-btn');
+  const charCounter = root.querySelector<HTMLElement>('#char-counter');
   const askValue = root.querySelector<HTMLElement>('#ask-value');
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
 
-  if (!chatLog || !inputRow || !chatInput || !sendBtn || !endPanel) {
+  if (!chatLog || !inputRow || !chatInput || !sendBtn || !charCounter || !endPanel) {
     return;
   }
+
+  const maxMessageChars = ctx.maxMessageChars;
+
+  // Live character counter + send gating: disabled when empty or over the
+  // per-message house-rule cap (maxlength on the input already blocks most
+  // of the latter, but paste/IME can still exceed it momentarily).
+  const updateInputState = (): void => {
+    const len = chatInput.value.length;
+    charCounter.textContent = `${len}/${maxMessageChars}`;
+    const overCap = len > maxMessageChars;
+    const nearCap = len >= Math.floor(maxMessageChars * 0.9);
+    charCounter.classList.toggle('over', overCap);
+    charCounter.classList.toggle('warning', !overCap && nearCap);
+    if (!chatInput.disabled) {
+      sendBtn.disabled = len === 0 || overCap;
+    }
+  };
+  chatInput.addEventListener('input', updateInputState);
+  updateInputState();
 
   const addBubble = (container: HTMLElement, sender: 'character' | 'user' | 'system', text: string): HTMLElement => {
     const bubble = document.createElement('div');
@@ -417,12 +448,13 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     event.preventDefault();
     if (chatInput.disabled) return;
     const text = chatInput.value.trim();
-    if (!text) return;
+    if (!text || text.length > maxMessageChars) return;
 
     addBubble(chatLog, 'user', text);
     chatInput.value = '';
     chatInput.disabled = true;
     sendBtn.disabled = true;
+    updateInputState();
 
     const typingBubble = addTypingBubble(chatLog);
 
@@ -441,18 +473,22 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           }, 1600);
         } else {
           chatInput.disabled = false;
-          sendBtn.disabled = false;
           chatInput.focus();
+          updateInputState();
         }
       })
-      .catch(() => {
+      .catch((err) => {
         // Turn was not consumed: nothing was applied to state, so the
         // player can simply try sending again.
         typingBubble.remove();
-        addBubble(chatLog, 'system', 'The line went quiet — try sending that again.');
+        if (err instanceof MessageTooLongError) {
+          addBubble(chatLog, 'system', `Keep it under ${err.maxMessageChars} characters — house rules.`);
+        } else {
+          addBubble(chatLog, 'system', 'The line went quiet — try sending that again.');
+        }
         chatInput.disabled = false;
-        sendBtn.disabled = false;
         chatInput.focus();
+        updateInputState();
       });
   });
 }
@@ -481,6 +517,8 @@ function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: num
     openingMessage: scenario.opening_message,
     currency: scenario.currency,
     maxPatience: scenario.patience,
+    maxTurns: scenario.max_turns,
+    maxMessageChars: scenario.max_message_chars ?? DEFAULT_MAX_MESSAGE_CHARS,
     showAsk,
     engine,
     initialTurn,

@@ -10,6 +10,23 @@ import type { CharacterTurn, CharacterTurnState, NegotiationEngine } from './eng
 import { apiBaseUrl } from './pocketbase';
 
 /**
+ * Thrown by `respond` when the backend rejects the message for being over
+ * the session's `max_message_chars` house rule (HTTP 400,
+ * `{error: "message_too_long", max_message_chars}`). Callers can catch this
+ * specifically to show an inline "keep it shorter" notice instead of the
+ * generic "line went quiet" failure message.
+ */
+export class MessageTooLongError extends Error {
+  readonly maxMessageChars: number;
+
+  constructor(maxMessageChars: number) {
+    super(`Message too long (max ${maxMessageChars} chars)`);
+    this.name = 'MessageTooLongError';
+    this.maxMessageChars = maxMessageChars;
+  }
+}
+
+/**
  * @param sessionToken opaque token returned by POST /api/game/session/start
  * @param startState   initial {patience, currentAsk, turns} from the start response's scenario
  */
@@ -33,6 +50,19 @@ export function createLlmEngine(sessionToken: string, startState: CharacterTurnS
     });
 
     if (!res.ok) {
+      if (res.status === 400) {
+        try {
+          const data = await res.json();
+          if (data && data.error === 'message_too_long') {
+            const max = typeof data.max_message_chars === 'number' ? data.max_message_chars : 280;
+            throw new MessageTooLongError(max);
+          }
+        } catch (err) {
+          if (err instanceof MessageTooLongError) throw err;
+          // JSON parse failure or other shape mismatch: fall through to the
+          // generic error below.
+        }
+      }
       throw new Error(`Negotiation turn request failed (${res.status})`);
     }
 
