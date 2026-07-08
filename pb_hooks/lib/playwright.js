@@ -225,6 +225,7 @@ function fetchRecentGeneratedScenarios(app) {
     var levers = spec.levers || {};
     recent.push({
       title: scenario.getString("title"),
+      theme: spec.item || null,
       frame: spec.frame || null,
       levers: {
         rewards: safeArray(levers.rewards),
@@ -238,9 +239,10 @@ function fetchRecentGeneratedScenarios(app) {
 
 function generatedScenarioSystemPrompt() {
   return [
-    "You are PLAYWRIGHT for Talked Down, a daily negotiation game.",
-    "Invent exactly one fresh scenario for the requested UTC date: setting, fictional character personality, opening line, and hidden negotiation parameters.",
+    "You are PLAYWRIGHT for Talked Down, a daily negotiation game where the player wins by chatting with an AI-played character and negotiating the best possible outcome (price, terms, or persuasion) before the character's patience or the turn limit runs out.",
+    "Your job: invent exactly one fresh, playable, fair scenario for the requested UTC date — setting, fictional character personality, opening line, and the hidden negotiation parameters the actor and scorer will use.",
     "Variety is mandatory. Rotate frames among: buy, sell, defend, multi_issue, non_price.",
+    "Rotate the setting/profession/domain every day across wildly different worlds (street food, shipping docks, space stations, farming, courtrooms, music, sports, fantasy, tech, travel, antiques, medicine, crafts...). NEVER reuse or closely echo a theme, item, or setting that appears in the recent-scenarios list — especially recent_themes_last_5_days. If art/galleries appeared recently, art is forbidden.",
     "Frame meanings are from the PLAYER'S story: buy = player buys from character; sell = player sells to character; defend = player defends their own position; multi_issue = trading terms beats grinding price; non_price = persuasion without money, e.g. talk a dragon into letting you pass.",
     "The secret direction is the CHARACTER'S price side: direction='sell' when the character is selling and cannot accept below floor_price; direction='buy' when the character is buying and cannot pay above floor_price; direction=null only for non_price.",
     "Levers must rotate and sometimes INVERT expectations: e.g. character punishes flattery, wastes messages, respects bluntness, rewards silence/walkaway, or dislikes over-empathy. Never reuse the same solution.",
@@ -256,12 +258,17 @@ function generatedScenarioSystemPrompt() {
 }
 
 function buildGenerationMessages(targetDate, recent, generationAttempt, cycle) {
+  var recentThemes = [];
+  for (var ti = 0; ti < recent.length && ti < 5; ti++) {
+    recentThemes.push({ title: recent[ti].title || null, theme: recent[ti].theme || null });
+  }
   var user = {
     target_date_utc: targetDate,
     cycle: cycle,
     generation_attempt: generationAttempt,
     recently_used_do_not_repeat_frames_levers_solutions: recent,
-    instruction: "Create tomorrow's playable scenario. Avoid every recent frame/lever/solution pattern above; if the most recent frame exists, choose a different frame."
+    recent_themes_last_5_days: recentThemes,
+    instruction: "Create tomorrow's playable scenario. Avoid every recent frame/lever/solution pattern above, choose a setting/domain absent from recent_themes_last_5_days, and if the most recent frame exists, choose a different frame."
   };
   return [
     { role: "system", content: generatedScenarioSystemPrompt() },
