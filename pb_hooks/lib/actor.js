@@ -22,6 +22,11 @@ Expected scenario_secrets.secret_spec shape:
 }
 */
 
+// Game rule: one message per turn, hard cap on message length. Enforced
+// server-side and surfaced to the player as a house rule (keeps per-session
+// LLM cost bounded).
+var MAX_MESSAGE_CHARS = 280;
+
 function todayUTC() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -226,6 +231,7 @@ function publicScenarioPayload(scenario, spec, state) {
     currency: spec.currency || null,
     patience: state.patience,
     max_turns: intOrDefault(spec.max_turns, 10),
+    max_message_chars: MAX_MESSAGE_CHARS,
     current_ask: state.current_ask,
   };
 }
@@ -544,6 +550,7 @@ function runNotaryBestEffort(sessionRecord, transcript) {
 
 
 module.exports = {
+  MAX_MESSAGE_CHARS: MAX_MESSAGE_CHARS,
   findTodaysScenario: findTodaysScenario,
   findSecretForScenario: findSecretForScenario,
   playerStatedPrice: playerStatedPrice,

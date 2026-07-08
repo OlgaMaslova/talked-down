@@ -39,6 +39,14 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   if (!playerMessage) {
     return e.json(400, { error: "message_required" });
   }
+  if (playerMessage.length > actorLib.MAX_MESSAGE_CHARS) {
+    // House rule: messages are capped. Enforced server-side so the cap
+    // cannot be bypassed by skipping the UI.
+    return e.json(400, {
+      error: "message_too_long",
+      max_message_chars: actorLib.MAX_MESSAGE_CHARS,
+    });
+  }
 
   var session;
   try {
@@ -182,7 +190,14 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   var scoreResult = null;
   if (done) {
     actorLib.runNotaryBestEffort(session, transcript);
-    scoreResult = actorLib.saveServerScoreBestEffort(e.app, scenario, spec, outcome, dealPrice, nextTurns, nextPatience, token, state);
+    if (state.device_id === "calibration") {
+      // Calibration self-play: score deterministically but never write a
+      // score record, so calibration runs cannot pollute daily rankings.
+      scoreResult = actorLib.computeServerScore(spec, outcome, dealPrice, nextTurns, nextPatience);
+      scoreResult.percentile = null;
+    } else {
+      scoreResult = actorLib.saveServerScoreBestEffort(e.app, scenario, spec, outcome, dealPrice, nextTurns, nextPatience, token, state);
+    }
   }
 
   var response = {
@@ -204,3 +219,48 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
 
   return e.json(200, response);
 });
+
+// Superuser-only: open a negotiation session for ANY scenario (by id or
+// scenario_date), so the self-play calibration harness can exercise
+// non-today scenarios. Regular turn flow is reused unchanged.
+routerAdd("POST", "/api/admin/calibration/start", (e) => {
+  var actorLib = require(__hooks + "/lib/actor.js");
+  var body = e.requestInfo().body || {};
+
+  var scenario = null;
+  try {
+    if (body.scenario_id) {
+      scenario = e.app.findRecordById("scenarios", String(body.scenario_id));
+    } else if (body.scenario_date) {
+      scenario = e.app.findFirstRecordByFilter(
+        "scenarios",
+        "status = {:status} && scenario_date = {:date}",
+        { status: "published", date: String(body.scenario_date) }
+      );
+    }
+  } catch (err) {
+    scenario = null;
+  }
+  if (!scenario) {
+    return e.json(404, { error: "scenario_not_found" });
+  }
+
+  var secretRecord;
+  try {
+    secretRecord = actorLib.findSecretForScenario(e.app, scenario.id);
+  } catch (err) {
+    return e.json(404, { error: "secret_not_found" });
+  }
+
+  var spec = actorLib.getJSONField(secretRecord, "secret_spec", {});
+  var created = actorLib.newSessionRecord(e.app, scenario, spec, {
+    device_id: "calibration",
+    handle: "calibration",
+  });
+  return e.json(200, {
+    llm: true,
+    scenario_id: scenario.id,
+    session_token: created.token,
+    scenario: actorLib.publicScenarioPayload(scenario, spec, created.state),
+  });
+}, $apis.requireSuperuserAuth());
