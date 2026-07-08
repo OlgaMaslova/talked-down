@@ -532,6 +532,320 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Claim handle ---------- */
+
+.claimed-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-left: 0.3rem;
+  border-radius: 50%;
+  background: var(--success);
+  color: #05271a;
+  font-size: 0.65rem;
+  font-weight: 800;
+  vertical-align: middle;
+}
+
+.claim-box:empty {
+  display: none;
+}
+
+.claim-btn {
+  width: 100%;
+  border: 1px dashed var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.claim-btn:hover {
+  background: rgba(255, 181, 69, 0.08);
+}
+
+.claim-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.claim-form.hidden {
+  display: none;
+}
+
+.claim-email-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.9rem;
+  outline: none;
+  min-width: 0;
+}
+
+.claim-email-input:focus {
+  border-color: var(--accent-2);
+}
+
+.claim-email-input:disabled {
+  opacity: 0.5;
+}
+
+.claim-submit-btn {
+  border: none;
+  background: var(--accent);
+  color: #221a08;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 0 1rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.claim-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.claim-status {
+  margin: 0;
+  font-size: 0.8rem;
+  min-height: 0;
+}
+
+.claim-status:empty {
+  display: none;
+}
+
+.claim-status.success {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.claim-status.error {
+  color: var(--danger);
+}
+
+.claim-status.pending {
+  color: var(--text-dim);
+}
+
+/* ---------- Leaderboard trigger ---------- */
+
+.leaderboard-btn {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  align-self: flex-start;
+  margin-top: 0.6rem;
+}
+
+.leaderboard-btn:hover {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.end-actions .leaderboard-btn {
+  flex: 1;
+  margin-top: 0;
+  text-align: center;
+}
+
+/* ---------- Leaderboard overlay ---------- */
+
+.leaderboard-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 7, 10, 0.7);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 50;
+}
+
+.leaderboard-card {
+  width: 100%;
+  max-width: 480px;
+  max-height: 82vh;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 20px 20px 0 0;
+  padding: 1.2rem 1.2rem calc(1.4rem + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  overflow: hidden;
+  animation: slide-up 0.22s ease-out;
+}
+
+.leaderboard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.leaderboard-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.leaderboard-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+}
+
+.leaderboard-close:hover {
+  color: var(--text);
+}
+
+.leaderboard-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.lb-tab {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.lb-tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 181, 69, 0.1);
+}
+
+.leaderboard-body {
+  overflow-y: auto;
+}
+
+.leaderboard-loading,
+.leaderboard-empty {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  padding: 1.5rem 0.5rem;
+}
+
+.leaderboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.88rem;
+}
+
+.lb-rank {
+  width: 1.6rem;
+  text-align: center;
+  font-weight: 800;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.lb-handle {
+  flex: 1;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-score {
+  font-weight: 700;
+  color: var(--accent-2);
+  flex-shrink: 0;
+}
+
+.lb-plays {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  flex-shrink: 0;
+  min-width: 3.6rem;
+  text-align: right;
+}
+
+/* ---------- Toast banner ---------- */
+
+.toast-banner {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  padding: 0.7rem 1.1rem;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  max-width: 92vw;
+  text-align: center;
+  animation: toast-in 0.2s ease-out;
+}
+
+.toast-banner.success {
+  background: var(--success);
+  color: #06271a;
+}
+
+.toast-banner.error {
+  background: var(--danger);
+  color: #2a0808;
+}
+
+.toast-banner.leaving {
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 /* ---------- Desktop (>=1024px) ---------- */
 
 @media (min-width: 1024px) {
@@ -630,5 +944,14 @@ body {
     border-radius: 20px;
     padding: 1.8rem 1.8rem 2rem;
     max-height: 80vh;
+  }
+
+  .leaderboard-overlay {
+    align-items: center;
+  }
+
+  .leaderboard-card {
+    border-radius: 20px;
+    max-height: 78vh;
   }
 }

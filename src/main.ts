@@ -4,6 +4,8 @@ import type { CharacterTurn, CharacterTurnState, NegotiationEngine } from './eng
 import { createLlmEngine, MessageTooLongError } from './llmEngine';
 import type { ScoreResult } from './scoring';
 import { getIdentity, type DeviceIdentity } from './identity';
+import { renderClaimWidget, claimedBadgeHtml, consumeClaimTokenFromUrl } from './claim';
+import { bindLeaderboardTrigger } from './leaderboard';
 
 /** Public fields of an LLM-generated scenario, as returned by session/start. */
 interface LlmScenario {
@@ -264,6 +266,18 @@ function escapeHtml(value: string): string {
   return div.innerHTML;
 }
 
+/** Transient top-of-screen banner used for claim confirmations/errors. */
+function showBanner(message: string, kind: 'success' | 'error'): void {
+  const banner = document.createElement('div');
+  banner.className = `toast-banner ${kind}`;
+  banner.textContent = message;
+  document.body.appendChild(banner);
+  window.setTimeout(() => {
+    banner.classList.add('leaving');
+    window.setTimeout(() => banner.remove(), 300);
+  }, 4200);
+}
+
 /** Everything renderGame needs, whether the negotiation is rule-engine or LLM driven. */
 interface GameContext {
   dayNumber: number;
@@ -299,6 +313,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         </div>
         ${ctx.playerBrief ? `<p class="player-brief">${escapeHtml(ctx.playerBrief)}</p>` : ''}
         <p class="house-rules">📜 House rules: ${ctx.maxTurns} message${ctx.maxTurns === 1 ? '' : 's'} max, ${ctx.maxMessageChars} characters each.</p>
+        <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
         ${
           ctx.showAsk
             ? `<div class="meters"><div class="ask-display">
@@ -327,10 +342,13 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const charCounter = root.querySelector<HTMLElement>('#char-counter');
   const askValue = root.querySelector<HTMLElement>('#ask-value');
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
+  const leaderboardBtnHeader = root.querySelector<HTMLButtonElement>('#leaderboard-btn-header');
 
   if (!chatLog || !inputRow || !chatInput || !sendBtn || !charCounter || !endPanel) {
     return;
   }
+
+  if (leaderboardBtnHeader) bindLeaderboardTrigger(leaderboardBtnHeader, ctx.dayNumber);
 
   const maxMessageChars = ctx.maxMessageChars;
 
@@ -399,13 +417,15 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         </div>
         <div class="end-percentile" id="end-percentile"></div>
         <div class="end-meta">
-          <span class="handle-badge" title="Your handle on this device">🎭 ${escapeHtml(ctx.identity.handle)}</span>
+          <span class="handle-badge" title="Your handle on this device">🎭 ${escapeHtml(ctx.identity.handle)}${claimedBadgeHtml()}</span>
           <span class="streak-badge">🔥 ${ctx.streak} day streak</span>
         </div>
         <div class="history-box" id="history-box"></div>
         <div class="share-card" id="share-card"></div>
+        <div class="claim-box" id="claim-box"></div>
         <div class="end-actions">
           <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
+          <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">🏆 Best negotiators</button>
         </div>
         <div class="countdown-box">
           Next negotiation in
@@ -436,6 +456,12 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
     const countdownEl = endPanel.querySelector<HTMLElement>('#countdown-value');
     if (countdownEl) startCountdown(countdownEl);
+
+    const claimBox = endPanel.querySelector<HTMLElement>('#claim-box');
+    if (claimBox) renderClaimWidget(claimBox, ctx.identity);
+
+    const leaderboardBtnEnd = endPanel.querySelector<HTMLButtonElement>('#leaderboard-btn-end');
+    if (leaderboardBtnEnd) bindLeaderboardTrigger(leaderboardBtnEnd, ctx.dayNumber);
 
     // Anonymous daily percentile vs today's score distribution (no signup).
     const percentileEl = endPanel.querySelector<HTMLElement>('#end-percentile');
@@ -579,6 +605,7 @@ function renderAlreadyPlayed(
       <header class="game-header">
         <span class="day-badge">Talked Down #${effectiveDay}</span>
         <h1 class="scenario-title">You\u2019ve already played today\u2019s negotiation.</h1>
+        <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
       </header>
       <div class="end-panel" id="end-panel">
         <div class="end-card">
@@ -594,13 +621,15 @@ function renderAlreadyPlayed(
           </div>
           <div class="end-percentile" id="end-percentile">You scored better than <strong>${result.percentile}%</strong> of today\u2019s negotiators</div>
           <div class="end-meta">
-            <span class="handle-badge" title="Your handle on this device">\ud83c\udfad ${escapeHtml(identity.handle)}</span>
+            <span class="handle-badge" title="Your handle on this device">\ud83c\udfad ${escapeHtml(identity.handle)}${claimedBadgeHtml()}</span>
             <span class="streak-badge">\ud83d\udd25 ${streak} day streak</span>
           </div>
           <div class="history-box" id="history-box"></div>
           <div class="share-card" id="share-card"></div>
+          <div class="claim-box" id="claim-box"></div>
           <div class="end-actions">
             <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
+            <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">🏆 Best negotiators</button>
           </div>
           <div class="countdown-box">
             Next negotiation in
@@ -634,6 +663,15 @@ function renderAlreadyPlayed(
   const countdownEl = root.querySelector<HTMLElement>('#countdown-value');
   if (countdownEl) startCountdown(countdownEl);
 
+  const claimBox = root.querySelector<HTMLElement>('#claim-box');
+  if (claimBox) renderClaimWidget(claimBox, identity);
+
+  const leaderboardBtnHeader = root.querySelector<HTMLButtonElement>('#leaderboard-btn-header');
+  if (leaderboardBtnHeader) bindLeaderboardTrigger(leaderboardBtnHeader, effectiveDay);
+
+  const leaderboardBtnEnd = root.querySelector<HTMLButtonElement>('#leaderboard-btn-end');
+  if (leaderboardBtnEnd) bindLeaderboardTrigger(leaderboardBtnEnd, effectiveDay);
+
   const historyBox = root.querySelector<HTMLElement>('#history-box');
   if (historyBox) {
     void fetchHistory(identity.deviceId).then((items) => {
@@ -657,6 +695,18 @@ async function main(): Promise<void> {
 
   const dayNumber = getDayNumber();
   const identity = getIdentity();
+
+  // If this load carries a claim magic-link token, verify it against this
+  // device up front (fire-and-forget: it only manages its own banner and
+  // the URL bar, independent of the game screen rendered below).
+  void consumeClaimTokenFromUrl(identity.deviceId).then((result) => {
+    if (!result) return;
+    if (result.ok) {
+      showBanner(`✅ Handle claimed: ${result.handle}`, 'success');
+    } else {
+      showBanner('That link expired — request a new one from your result screen.', 'error');
+    }
+  });
 
   const session = await startBackendSession(identity);
   if (session && session.llm === true) {
