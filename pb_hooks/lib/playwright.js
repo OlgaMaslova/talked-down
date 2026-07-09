@@ -934,6 +934,7 @@ function computeDailyRecap(app, recapDate) {
   var total = 0;
   var best = null;
   var bestHandle = "";
+  var bestPrice = null;
   for (var i = 0; i < records.length; i++) {
     var r = records[i];
     plays++;
@@ -945,13 +946,30 @@ function computeDailyRecap(app, recapDate) {
     if (best === null || score > best) {
       best = score;
       bestHandle = String(r.getString("handle") || "");
+      bestPrice = null;
+      if (String(r.getString("outcome")) === "deal") {
+        var p = r.getFloat("deal_price");
+        if (typeof p === "number" && isFinite(p) && p > 0) {
+          bestPrice = p;
+        }
+      }
     }
   }
 
   var scenarioTitle = "";
+  var currency = "";
   var scenario = findPublishedScenarioForDate(app, recapDate);
   if (scenario) {
     scenarioTitle = scenario.getString("title");
+    var secretRecord = findSecretForScenario(app, scenario.id);
+    if (secretRecord) {
+      try {
+        var spec = JSON.parse(secretRecord.getString("secret_spec") || "{}");
+        if (spec && typeof spec.currency === "string") {
+          currency = spec.currency.slice(0, 24);
+        }
+      } catch (specErr) {}
+    }
   }
 
   var recap = {
@@ -963,6 +981,8 @@ function computeDailyRecap(app, recapDate) {
     avg_score: plays ? Math.round((total / plays) * 10) / 10 : 0,
     best_score: best === null ? 0 : best,
     best_handle: bestHandle,
+    best_price: bestPrice,
+    currency: currency,
     scenario_title: scenarioTitle
   };
 
@@ -982,6 +1002,8 @@ function computeDailyRecap(app, recapDate) {
   record.set("avg_score", recap.avg_score);
   record.set("best_score", recap.best_score);
   record.set("best_handle", recap.best_handle);
+  record.set("best_price", recap.best_price === null ? 0 : recap.best_price);
+  record.set("currency", recap.currency);
   record.set("scenario_title", recap.scenario_title);
   app.save(record);
 

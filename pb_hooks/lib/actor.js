@@ -610,6 +610,10 @@ function saveServerScoreBestEffort(app, scenario, spec, outcome, dealPrice, turn
     record.set("turns", intOrDefault(turnsUsed, 0));
     record.set("result_label", result.label);
     record.set("outcome", String(outcome || ""));
+    var finalPrice = numberOrNull(dealPrice);
+    if (outcome === "deal" && finalPrice !== null) {
+      record.set("deal_price", finalPrice);
+    }
     record.set("percentile", result.percentile);
     record.set("day_number", currentDayNumber());
     if (sessionState.device_id) {
