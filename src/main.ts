@@ -1,5 +1,5 @@
 import './styles.css';
-import logoUrl from './assets/logo.svg';
+import logoUrl from './assets/td-logo.jpg';
 import { pb, apiBaseUrl } from './pocketbase';
 import type { CharacterTurn, CharacterTurnState, NegotiationEngine } from './engine';
 import { createLlmEngine, MessageTooLongError } from './llmEngine';
