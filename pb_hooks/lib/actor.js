@@ -180,6 +180,9 @@ function newSessionRecord(app, scenario, spec, identity) {
   identity = identity || {};
   var state = {
     patience: patience,
+    // Per-session randomized no-lever grind cap (fraction of opening→floor
+    // span, 5%..15%) so concession rhythm differs between sessions.
+    grind_cap: Math.round((0.05 + (Math.random() * 0.10)) * 1000) / 1000,
     turns: 0,
     current_ask: numberOrNull(spec.opening_price),
     mood: "neutral",
@@ -542,8 +545,30 @@ function validateLeverHit(spec, state, claimed, playerMessage) {
 }
 
 // Per-turn concession limits as fractions of the opening→floor span.
+// The no-lever grind cap is a fallback: sessions carry their own randomized
+// cap in state.grind_cap (5%..15%), further modulated by remaining patience.
 var MAX_STEP_NO_LEVER = 0.08;
 var MAX_STEP_LEVER = 0.30;
+var MIN_EFFECTIVE_GRIND = 0.03;
+var MAX_EFFECTIVE_GRIND = 0.20;
+
+// Effective no-lever grind cap for this turn: the session's randomized base
+// cap scaled by mood/patience. A worn-down actor (low patience) concedes in
+// bigger steps to end it; a fresh one holds tighter — so pressure tactics
+// change the rhythm (at the risk of a walk-away).
+function effectiveGrindCap(spec, state) {
+  var base = numberOrNull(state && state.grind_cap);
+  if (base === null || base <= 0) {
+    // Legacy sessions created before per-session caps: keep the old fixed cap.
+    return MAX_STEP_NO_LEVER;
+  }
+  var initial = intOrDefault(spec.patience, 10);
+  var remaining = intOrDefault(state && state.patience, initial);
+  var fraction = initial > 0 ? Math.max(0, Math.min(1, remaining / initial)) : 1;
+  // Full patience → 0.75x base; empty patience → 1.25x base.
+  var scaled = base * (0.75 + (0.5 * (1 - fraction)));
+  return Math.max(MIN_EFFECTIVE_GRIND, Math.min(MAX_EFFECTIVE_GRIND, scaled));
+}
 
 // Mechanically enforce the concession rules: without a validated lever hit
 // the actor may only grind a small step toward the floor; with one it may
@@ -579,7 +604,7 @@ function clampConcession(spec, state, actor, leverHit, playerMessage) {
   if (!span) {
     return null;
   }
-  var maxStep = span * (leverHit ? MAX_STEP_LEVER : MAX_STEP_NO_LEVER);
+  var maxStep = span * (leverHit ? MAX_STEP_LEVER : effectiveGrindCap(spec, state));
   // Concession direction: sell → ask moves down toward floor; buy → up.
   var sign = direction === "sell" ? 1 : -1;
   var concession = (prevAsk - offer) * sign;
@@ -906,6 +931,7 @@ module.exports = {
   cleanActorResult: cleanActorResult,
   validateLeverHit: validateLeverHit,
   clampConcession: clampConcession,
+  effectiveGrindCap: effectiveGrindCap,
   dealRespectsFloor: dealRespectsFloor,
   responseState: responseState,
   logIncident: logIncident,

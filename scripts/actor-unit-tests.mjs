@@ -105,5 +105,35 @@ check("does not touch other numbers", actor.rewritePriceInText("You said 4100, I
   check("player echo not extracted, standing ask not a concession", found === null, found);
 }
 
+// --- per-session grind cap + patience modulation ---------------------------------
+const specP = { ...spec, patience: 6 };
+{
+  // legacy session (no grind_cap) keeps fixed 8%
+  check("legacy state uses fixed 0.08", actor.effectiveGrindCap(specP, { current_ask: 4800 }) === 0.08);
+  // full patience → 0.75x base
+  const full = actor.effectiveGrindCap(specP, { grind_cap: 0.10, patience: 6 });
+  check("full patience tightens cap (0.075)", Math.abs(full - 0.075) < 1e-9, full);
+  // zero patience → 1.25x base
+  const worn = actor.effectiveGrindCap(specP, { grind_cap: 0.10, patience: 0 });
+  check("worn-down actor loosens cap (0.125)", Math.abs(worn - 0.125) < 1e-9, worn);
+  // bounds
+  check("cap lower bound 0.03", actor.effectiveGrindCap(specP, { grind_cap: 0.01, patience: 6 }) === 0.03);
+  check("cap upper bound 0.20", actor.effectiveGrindCap(specP, { grind_cap: 0.9, patience: 0 }) === 0.20);
+}
+{
+  // clamp actually uses the session cap: base 0.10, full patience → 7.5% of 600 = 45 → 4800→4755
+  const state = { current_ask: 4800, grind_cap: 0.10, patience: 6 };
+  const a = { reply: "Ok, 4600 and it's yours.", offer: 4600, action: "propose" };
+  const info = actor.clampConcession(specP, state, a, null, "4250");
+  check("clamp uses session cap + patience", info && info.clamped === 4755 && a.offer === 4755, info);
+}
+{
+  // same turn, worn-down actor: 12.5% of 600 = 75 → 4800→4725
+  const state = { current_ask: 4800, grind_cap: 0.10, patience: 0 };
+  const a = { reply: "Fine. 4600.", offer: 4600, action: "propose" };
+  const info = actor.clampConcession(specP, state, a, null, "4250");
+  check("low patience allows bigger grind", info && info.clamped === 4725, info);
+}
+
 console.log(failures ? `\n${failures} FAILURES` : "\nall tests passed");
 process.exit(failures ? 1 : 0);
