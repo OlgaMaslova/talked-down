@@ -106,6 +106,23 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     });
   }
 
+  // Mechanical concession enforcement: the model must have named a real,
+  // unused levers.rewards entry for a big step; otherwise the server clamps
+  // the price movement to a small grind. Accepts are exempt (the accept
+  // branch below already validates floor + player agreement).
+  var leverHit = actorLib.validateLeverHit(spec, state, actor.lever_hit);
+  if (actor.action !== "accept") {
+    var clampInfo = actorLib.clampConcession(spec, state, actor, leverHit);
+    if (clampInfo) {
+      actorLib.logIncident(e.app, token, "concession_clamped", {
+        original: clampInfo.original,
+        clamped: clampInfo.clamped,
+        lever_hit: clampInfo.lever_hit,
+        turn: currentTurns,
+      });
+    }
+  }
+
   var nextTurns = currentTurns + 1;
   var nextPatience = actorLib.intOrDefault(state.patience, actorLib.intOrDefault(spec.patience, 10)) + actor.patience_delta;
   var action = actor.action;
@@ -202,6 +219,10 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   var nextAsk = actor.offer !== null ? actor.offer : actorLib.numberOrNull(state.current_ask);
   var priorDeviceId = state.device_id;
   var priorHandle = state.handle;
+  var leversUsed = Array.isArray(state.levers_used) ? state.levers_used : [];
+  if (leverHit && leversUsed.indexOf(leverHit) === -1) {
+    leversUsed = leversUsed.concat([leverHit]);
+  }
   state = {
     patience: nextPatience,
     turns: nextTurns,
@@ -209,6 +230,7 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     mood: actor.mood,
     device_id: priorDeviceId,
     handle: priorHandle,
+    levers_used: leversUsed,
   };
   if (!accepted && pendingOffer !== null) {
     state.pending_offer = pendingOffer;
