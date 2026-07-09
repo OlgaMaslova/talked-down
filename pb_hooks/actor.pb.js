@@ -110,9 +110,9 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   // unused levers.rewards entry for a big step; otherwise the server clamps
   // the price movement to a small grind. Accepts are exempt (the accept
   // branch below already validates floor + player agreement).
-  var leverHit = actorLib.validateLeverHit(spec, state, actor.lever_hit);
+  var leverHit = actorLib.validateLeverHit(spec, state, actor.lever_hit, playerMessage);
   if (actor.action !== "accept") {
-    var clampInfo = actorLib.clampConcession(spec, state, actor, leverHit);
+    var clampInfo = actorLib.clampConcession(spec, state, actor, leverHit, playerMessage);
     if (clampInfo) {
       actorLib.logIncident(e.app, token, "concession_clamped", {
         original: clampInfo.original,
