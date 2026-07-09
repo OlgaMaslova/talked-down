@@ -194,15 +194,19 @@ routerAdd("GET", "/api/game/leaderboard", (e) => {
     dayNumber = parseInt(raw, 10);
   }
 
-  var models = arrayOf(new DynamicModel({ handle: "", claimed: 0, best_score: 0, plays: 0 }));
+  var models = arrayOf(new DynamicModel({ handle: "", claimed: 0, best_score: 0, plays: 0, deal_price: -1 }));
   var sql = "SELECT COALESCE(NULLIF(c.handle, ''), " +
     "(SELECT s2.handle FROM scores s2 WHERE s2.device_id = s.device_id AND s2.handle != '' ORDER BY s2.rowid DESC LIMIT 1), " +
     "'Anonymous') AS handle, " +
     "CASE WHEN c.device_id IS NULL THEN 0 ELSE 1 END AS claimed, " +
-    "MAX(s.score) AS best_score, COUNT(s.id) AS plays " +
+    "MAX(s.score) AS best_score, COUNT(s.id) AS plays, " +
+    "COALESCE((SELECT s3.deal_price FROM scores s3 WHERE s3.device_id = s.device_id " +
+    "AND (CASE WHEN {:by_day} = 1 THEN s3.day_number = {:day_number2} ELSE 1 END) " +
+    "AND s3.outcome = 'deal' AND s3.deal_price IS NOT NULL " +
+    "ORDER BY s3.score DESC, s3.rowid DESC LIMIT 1), -1) AS deal_price " +
     "FROM scores s LEFT JOIN claims c ON c.id = (SELECT c2.id FROM claims c2 WHERE c2.device_id = s.device_id AND c2.status = 'claimed' ORDER BY c2.claimed_at DESC LIMIT 1) " +
     "WHERE s.device_id != ''";
-  var params = {};
+  var params = { by_day: scope === "day" ? 1 : 0, day_number2: dayNumber === null ? -1 : dayNumber };
   if (scope === "day") {
     sql += " AND s.day_number = {:day_number}";
     params.day_number = dayNumber;
@@ -210,9 +214,7 @@ routerAdd("GET", "/api/game/leaderboard", (e) => {
   sql += " GROUP BY s.device_id ORDER BY best_score DESC, plays ASC, handle ASC LIMIT 20";
   try {
     var q = e.app.db().newQuery(sql);
-    if (scope === "day") {
-      q.bind(params);
-    }
+    q.bind(params);
     q.all(models);
   } catch (err) {
     console.log("leaderboard_failed: " + err.message);
@@ -220,9 +222,28 @@ routerAdd("GET", "/api/game/leaderboard", (e) => {
   }
   var entries = [];
   for (var i = 0; i < models.length; i++) {
-    entries.push({ handle: String(models[i].handle || ""), claimed: Number(models[i].claimed || 0) === 1, best_score: Number(models[i].best_score || 0), plays: Number(models[i].plays || 0) });
+    var rawPrice = Number(models[i].deal_price);
+    entries.push({
+      handle: String(models[i].handle || ""),
+      claimed: Number(models[i].claimed || 0) === 1,
+      best_score: Number(models[i].best_score || 0),
+      plays: Number(models[i].plays || 0),
+      deal_price: isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : null,
+    });
   }
-  return e.json(200, { scope: scope, entries: entries });
+  var currency = null;
+  if (scope === "day") {
+    try {
+      var lbActorLib = require(__hooks + "/lib/actor.js");
+      if (dayNumber === lbActorLib.currentDayNumber()) {
+        var todayScenario = lbActorLib.findTodaysScenario(e.app);
+        if (todayScenario) {
+          currency = String(todayScenario.getString("currency") || "") || null;
+        }
+      }
+    } catch (curErr) {}
+  }
+  return e.json(200, { scope: scope, currency: currency, entries: entries });
 });
 
 routerAdd("GET", "/api/claim/status", (e) => {

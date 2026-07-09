@@ -412,6 +412,10 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
   const maxMessageChars = ctx.maxMessageChars;
 
+  // No instant accepts at the opening price: the Accept button unlocks only
+  // after the player has sent at least one message of their own.
+  let hasNegotiated = false;
+
   // Live character counter + send gating: disabled when empty or over the
   // per-message house-rule cap (maxlength on the input already blocks most
   // of the latter, but paste/IME can still exceed it momentarily).
@@ -425,10 +429,13 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     if (!chatInput.disabled) {
       sendBtn.disabled = len === 0 || overCap;
     }
-    if (acceptBtn) acceptBtn.disabled = chatInput.disabled;
+    if (acceptBtn) acceptBtn.disabled = chatInput.disabled || !hasNegotiated;
   };
   chatInput.addEventListener('input', updateInputState);
   updateInputState();
+  if (acceptBtn) {
+    acceptBtn.title = 'Negotiate first — send a message before accepting';
+  }
 
   // Opener chips: tap-to-prefill (still editable), removed once the player
   // sends their first message. See the analysis note above the markup.
@@ -583,6 +590,8 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     if (!text || text.length > maxMessageChars) return;
 
     hideOpenerChips();
+    hasNegotiated = true;
+    if (acceptBtn) acceptBtn.title = 'Accept the current offer';
     addBubble(chatLog, 'user', text);
     chatInput.value = '';
     chatInput.disabled = true;
@@ -635,7 +644,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   // same as a typed "deal").
   if (acceptBtn) {
     acceptBtn.addEventListener('click', () => {
-      if (chatInput.disabled) return;
+      if (chatInput.disabled || !hasNegotiated) return;
       const current = lastKnownAsk;
       const text =
         ctx.showAsk && current !== null

@@ -910,6 +910,13 @@ body {
   flex-shrink: 0;
 }
 
+.lb-price {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
 .lb-plays {
   color: var(--text-dim);
   font-size: 0.78rem;

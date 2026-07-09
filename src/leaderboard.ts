@@ -12,10 +12,12 @@ interface LeaderboardEntry {
   claimed?: boolean;
   best_score: number;
   plays: number;
+  deal_price?: number | null;
 }
 
 interface LeaderboardResponse {
   scope: string;
+  currency?: string | null;
   entries: LeaderboardEntry[];
 }
 
@@ -43,7 +45,15 @@ function escapeHtml(value: string): string {
   return div.innerHTML;
 }
 
-function renderRows(entries: LeaderboardEntry[]): string {
+function formatPrice(value: number, currency: string | null | undefined): string {
+  const rounded = Math.round(value);
+  const cur = (currency ?? '').trim();
+  if (!cur) return rounded.toLocaleString();
+  if (cur.length <= 2 && /[^a-zA-Z0-9\s]/.test(cur)) return `${cur}${rounded.toLocaleString()}`;
+  return `${rounded.toLocaleString()} ${cur}`;
+}
+
+function renderRows(entries: LeaderboardEntry[], showPrice: boolean, currency?: string | null): string {
   if (entries.length === 0) {
     return '<p class="leaderboard-empty">No negotiators yet — be the first.</p>';
   }
@@ -53,7 +63,11 @@ function renderRows(entries: LeaderboardEntry[]): string {
       <li class="leaderboard-row">
         <span class="lb-rank">${index + 1}</span>
         <span class="lb-handle">${escapeHtml(entry.handle)}${entry.claimed ? '<span class="claimed-badge" title="Handle claimed">✓</span>' : ''}</span>
-        <span class="lb-score">${entry.best_score}/100</span>
+        <span class="lb-score">${entry.best_score}/100</span>${
+          showPrice && typeof entry.deal_price === 'number'
+            ? `<span class="lb-price" title="Deal price">${escapeHtml(formatPrice(entry.deal_price, currency))}</span>`
+            : ''
+        }
         <span class="lb-plays">${entry.plays} play${entry.plays === 1 ? '' : 's'}</span>
       </li>`,
     )
@@ -111,7 +125,7 @@ function openOverlay(dayNumber: number): void {
         body.innerHTML = '<p class="leaderboard-empty">Couldn\u2019t load the leaderboard — try again shortly.</p>';
         return;
       }
-      body.innerHTML = renderRows(data.entries);
+      body.innerHTML = renderRows(data.entries, scope === 'day', data.currency);
     });
   };
 
