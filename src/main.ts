@@ -332,6 +332,17 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         }
       </header>
       <div class="chat-log" id="chat-log"></div>
+      <!-- Opener suggestion chips: docs/session-analysis-2026-07-09.md found 115/145
+           sessions abandoned with a median of 0 player messages (blank-page
+           friction), and that flattery (67%) and logic (50%) openers close the
+           most deals. Chips prefill an editable opener and disappear after the
+           first message. -->
+      <div class="opener-chips" id="opener-chips" role="group" aria-label="Suggested openers">
+        <span class="opener-chips-label">Not sure how to start?</span>
+        <button type="button" class="opener-chip" data-opener="This is beautiful work — you clearly know your craft. What's your best price for me?">😊 Open with a compliment</button>
+        <button type="button" class="opener-chip" data-opener="That price seems high for what this is. Walk me through why it's worth that much?">🧠 Question the price</button>
+        <button type="button" class="opener-chip" data-opener="I'm interested, but my budget is tight. Could you do a better deal?">💰 Make a modest offer</button>
+      </div>
       <form class="input-row" id="input-row">
         <div class="input-field">
           <input id="chat-input" type="text" placeholder="Type your offer or say something…" autocomplete="off" maxlength="${ctx.maxMessageChars}" />
@@ -415,6 +426,23 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   };
   chatInput.addEventListener('input', updateInputState);
   updateInputState();
+
+  // Opener chips: tap-to-prefill (still editable), removed once the player
+  // sends their first message. See the analysis note above the markup.
+  const openerChips = root.querySelector<HTMLElement>('#opener-chips');
+  if (openerChips) {
+    openerChips.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      const chip = target.closest<HTMLButtonElement>('.opener-chip');
+      if (!chip || chatInput.disabled) return;
+      chatInput.value = (chip.dataset.opener ?? '').slice(0, maxMessageChars);
+      chatInput.focus();
+      updateInputState();
+    });
+  }
+  const hideOpenerChips = (): void => {
+    openerChips?.remove();
+  };
 
   const addBubble = (container: HTMLElement, sender: 'character' | 'user' | 'system', text: string): HTMLElement => {
     const bubble = document.createElement('div');
@@ -549,6 +577,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     const text = chatInput.value.trim();
     if (!text || text.length > maxMessageChars) return;
 
+    hideOpenerChips();
     addBubble(chatLog, 'user', text);
     chatInput.value = '';
     chatInput.disabled = true;
