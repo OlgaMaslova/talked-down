@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Unit tests for the mechanical concession-enforcement layer in
-// pb_hooks/lib/actor.js. Runs in plain node (no PocketBase needed):
+// Unit tests for the decide→validate→speak pipeline's server-side validation
+// layer in pb_hooks/lib/actor.js. Runs in plain node (no PocketBase needed):
 //   node scripts/actor-unit-tests.mjs
 // The repo package.json is type:module while pb_hooks is CommonJS (goja), so
 // stage the hook files as .cjs in a temp dir before requiring them.
@@ -31,136 +31,135 @@ const spec = {
   direction: "sell",
   opening_price: 4800,
   floor_price: 4200,
+  patience: 6,
   levers: { rewards: ["offers to handle pickup and hauling themselves", "mentions buying the spare parts crate too"] },
 };
 
-// --- number parsing / formats ------------------------------------------------
+// --- number parsing / formats (still used for player-side price parsing) -----
 check("parses 4,500 as 4500", actor.parsePriceToken("4,500") === 4500);
 check("parses 4.500 as 4500", actor.parsePriceToken("4.500") === 4500);
 check("parses 4500 as 4500", actor.parsePriceToken("4500") === 4500);
 check("parses 4.5 as 4.5", actor.parsePriceToken("4.5") === 4.5);
 check("numbersInText finds thousand-grouped", JSON.stringify(actor.numbersInText("down to 4,500 credits")) === "[4500]");
 
-// --- reply rewrite handles formatted numbers ---------------------------------
-check("rewrites 4,500 in reply", actor.rewritePriceInText("I can do 4,500 credits. 4,500 final.", 4500, 4750) === "I can do 4750 credits. 4750 final.");
-check("rewrites 4.500 in reply", actor.rewritePriceInText("Say 4.500 then.", 4500, 4750) === "Say 4750 then.");
-check("does not touch other numbers", actor.rewritePriceInText("You said 4100, I want 4500.", 4500, 4750) === "You said 4100, I want 4750.");
-
-// --- price hidden in reply text is recovered and clamped ---------------------
+// --- cleanDecision normalization ---------------------------------------------
 {
-  const state = { current_ask: 4800 };
-  const a = { reply: "Fine, I can move down to 4,500 for you.", offer: null, action: "continue" };
-  const info = actor.clampConcession(spec, state, a, null, "I'm busy here 4000");
-  // span 600, no-lever max step 8% = 48 → clamp 4800→4752
-  check("null-offer reply price recovered + clamped", info && info.original === 4500 && info.clamped === 4752, info);
-  check("offer baseline advanced", a.offer === 4752, a.offer);
-  check("reply rewritten incl. formatted number", a.reply.indexOf("4752") !== -1 && a.reply.indexOf("4,500") === -1, a.reply);
+  const v = actor.cleanDecision({ decision: "nonsense", action: "bogus", proposed_price: "4500", patience_delta: -9, lever_hit: "  x  " });
+  check("cleanDecision defaults + coerces", v.decision === "hold" && v.action === "continue" && v.offer === 4500 && v.patience_delta === -2 && v.lever_hit === "x", v);
 }
 
-// --- structured offer still clamped ------------------------------------------
+// --- hold: any movement snaps back to the standing ask -------------------------
 {
-  const state = { current_ask: 4800 };
-  const a = { reply: "Ok, 4600 and it's yours.", offer: 4600, action: "propose" };
-  const info = actor.clampConcession(spec, state, a, null, "4250");
-  check("bare-number turn clamped to grind step", info && info.clamped === 4752 && a.offer === 4752, info);
+  const v = { decision: "hold", action: "continue", offer: 4600, lever_hit: null };
+  const info = actor.validateDecision(spec, { current_ask: 4800 }, v);
+  check("hold cannot move price", info && info.original === 4600 && v.offer === 4800, { info, v });
 }
 
-// --- lever hit allows a real step ----------------------------------------------
+// --- grind: small step allowed, big step snapped to the grind band -------------
 {
-  const state = { current_ask: 4800, levers_used: [] };
-  const lever = actor.validateLeverHit(spec, state, "offers to handle pickup and hauling themselves", "I'll handle the hauling and pickup myself with my own rig");
-  check("genuine lever validates", lever === spec.levers.rewards[0], lever);
-  const a = { reply: "Since you're hauling it yourself, 4620.", offer: 4620, action: "propose" };
-  const info = actor.clampConcession(spec, state, a, lever, "I'll handle the hauling and pickup myself with my own rig");
-  // lever max step 30% of 600 = 180 → 4620 allowed unchanged
-  check("lever-backed step allowed", info === null && a.offer === 4620, { info, offer: a.offer });
+  // legacy fixed cap 8% of 600 = 48 → 4800→4752
+  const v = { decision: "grind", action: "propose", offer: 4600, lever_hit: null };
+  const info = actor.validateDecision(spec, { current_ask: 4800 }, v);
+  check("oversized grind snapped to band", info && info.snapped === 4752 && v.offer === 4752, { info, v });
+}
+{
+  const v = { decision: "grind", action: "continue", offer: 4770, lever_hit: null };
+  const info = actor.validateDecision(spec, { current_ask: 4800 }, v);
+  check("in-band grind kept as proposed", info === null && v.offer === 4770, { info, v });
 }
 
-// --- claimed lever on a bare-number turn is rejected ---------------------------
+// --- null proposed price stands on the current ask -----------------------------
 {
-  const state = { current_ask: 4800, levers_used: [] };
-  const lever = actor.validateLeverHit(spec, state, "offers to handle pickup and hauling themselves", "I'm busy here 4000");
-  check("lever claim on bare number rejected", lever === null, lever);
+  const v = { decision: "grind", action: "continue", offer: null, lever_hit: null };
+  const info = actor.validateDecision(spec, { current_ask: 4700 }, v);
+  check("null price → hold at current ask", info === null && v.offer === 4700, v);
 }
 
-// --- used lever cannot be re-claimed -------------------------------------------
+// --- price never moves away from the player -------------------------------------
 {
-  const state = { current_ask: 4600, levers_used: ["offers to handle pickup and hauling themselves"] };
-  const lever = actor.validateLeverHit(spec, state, "offers to handle pickup and hauling themselves", "again, I'm hauling it myself, pickup on me");
-  check("used lever rejected", lever === null, lever);
+  const v = { decision: "grind", action: "continue", offer: 4900, lever_hit: null };
+  const info = actor.validateDecision(spec, { current_ask: 4700 }, v);
+  check("raising the ask snapped back", info && v.offer === 4700, { info, v });
 }
 
-// --- floor is never crossed -----------------------------------------------------
+// --- lever: real step allowed, only with a valid unused lever --------------------
 {
-  const state = { current_ask: 4260 };
-  const a = { reply: "Ugh. 4100 then.", offer: 4100, action: "propose" };
-  const info = actor.clampConcession(spec, state, a, null, "4050");
-  check("never past floor", info && a.offer >= 4200, { info, offer: a.offer });
+  const v = { decision: "lever", action: "propose", offer: 4620, lever_hit: spec.levers.rewards[0] };
+  const info = actor.validateDecision(spec, { current_ask: 4800, levers_used: [] }, v);
+  // lever band 30% of 600 = 180 → 4620 allowed unchanged
+  check("lever-backed step allowed", info === null && v.offer === 4620 && v.lever_hit === spec.levers.rewards[0], v);
+}
+{
+  // lever claim naming a string not in levers.rewards → downgraded to grind
+  const v = { decision: "lever", action: "propose", offer: 4600, lever_hit: "clean direct offer" };
+  const info = actor.validateDecision(spec, { current_ask: 4800, levers_used: [] }, v);
+  check("fake lever downgraded to grind + snapped", v.decision === "grind" && v.lever_hit === null && info && v.offer === 4752, { info, v });
+}
+{
+  // already-used lever → downgraded to grind
+  const v = { decision: "lever", action: "propose", offer: 4620, lever_hit: spec.levers.rewards[0] };
+  const info = actor.validateDecision(spec, { current_ask: 4800, levers_used: [spec.levers.rewards[0]] }, v);
+  check("used lever downgraded to grind + snapped", v.decision === "grind" && v.lever_hit === null && info && v.offer === 4752, { info, v });
+}
+{
+  // oversized lever step snapped to the lever band
+  const v = { decision: "lever", action: "propose", offer: 4300, lever_hit: spec.levers.rewards[1] };
+  const info = actor.validateDecision(spec, { current_ask: 4800, levers_used: [] }, v);
+  check("oversized lever step snapped to 30% band", info && v.offer === 4620, { info, v });
 }
 
-// --- player-quoted numbers in reply are not treated as new asks ------------------
+// --- floor is never crossed -------------------------------------------------------
 {
-  const state = { current_ask: 4500 };
-  const found = actor.extractAskFromReply(spec, state, "4300 shows effort, but I'm holding at 4500.", "4300?");
-  check("player echo not extracted, standing ask not a concession", found === null, found);
+  const v = { decision: "lever", action: "propose", offer: 4100, lever_hit: spec.levers.rewards[0] };
+  const info = actor.validateDecision(spec, { current_ask: 4260, levers_used: [] }, v);
+  check("never past floor", info && v.offer >= 4200, { info, v });
 }
 
-// --- per-session grind cap + patience modulation ---------------------------------
-const specP = { ...spec, patience: 6 };
+// --- validateLeverHit (list + one-payout, no word-matching) -------------------------
+check("valid lever accepted", actor.validateLeverHit(spec, { levers_used: [] }, spec.levers.rewards[0]) === spec.levers.rewards[0]);
+check("case-insensitive match", actor.validateLeverHit(spec, { levers_used: [] }, spec.levers.rewards[0].toUpperCase()) === spec.levers.rewards[0]);
+check("unknown lever rejected", actor.validateLeverHit(spec, { levers_used: [] }, "flattery") === null);
+check("used lever rejected", actor.validateLeverHit(spec, { levers_used: [spec.levers.rewards[0]] }, spec.levers.rewards[0]) === null);
+check("null lever rejected", actor.validateLeverHit(spec, { levers_used: [] }, null) === null);
+
+// --- non-price frames carry no price -------------------------------------------------
+{
+  const v = { decision: "grind", action: "propose", offer: 500, lever_hit: null };
+  const info = actor.validateDecision({ frame: "non_price" }, {}, v);
+  check("non-price frame nulls the offer", info === null && v.offer === null, v);
+}
+
+// --- per-session grind cap + patience modulation ----------------------------------
 {
   // legacy session (no grind_cap) keeps fixed 8%
-  check("legacy state uses fixed 0.08", actor.effectiveGrindCap(specP, { current_ask: 4800 }) === 0.08);
-  // full patience → 0.75x base
-  const full = actor.effectiveGrindCap(specP, { grind_cap: 0.10, patience: 6 });
+  check("legacy state uses fixed 0.08", actor.effectiveGrindCap(spec, { current_ask: 4800 }) === 0.08);
+  const full = actor.effectiveGrindCap(spec, { grind_cap: 0.10, patience: 6 });
   check("full patience tightens cap (0.075)", Math.abs(full - 0.075) < 1e-9, full);
-  // zero patience → 1.25x base
-  const worn = actor.effectiveGrindCap(specP, { grind_cap: 0.10, patience: 0 });
+  const worn = actor.effectiveGrindCap(spec, { grind_cap: 0.10, patience: 0 });
   check("worn-down actor loosens cap (0.125)", Math.abs(worn - 0.125) < 1e-9, worn);
-  // bounds
-  check("cap lower bound 0.03", actor.effectiveGrindCap(specP, { grind_cap: 0.01, patience: 6 }) === 0.03);
-  check("cap upper bound 0.20", actor.effectiveGrindCap(specP, { grind_cap: 0.9, patience: 0 }) === 0.20);
+  check("cap lower bound 0.03", actor.effectiveGrindCap(spec, { grind_cap: 0.01, patience: 6 }) === 0.03);
+  check("cap upper bound 0.20", actor.effectiveGrindCap(spec, { grind_cap: 0.9, patience: 0 }) === 0.20);
 }
 {
-  // clamp actually uses the session cap: base 0.10, full patience → 7.5% of 600 = 45 → 4800→4755
-  const state = { current_ask: 4800, grind_cap: 0.10, patience: 6 };
-  const a = { reply: "Ok, 4600 and it's yours.", offer: 4600, action: "propose" };
-  const info = actor.clampConcession(specP, state, a, null, "4250");
-  check("clamp uses session cap + patience", info && info.clamped === 4755 && a.offer === 4755, info);
+  // validation uses the session cap: base 0.10, full patience → 7.5% of 600 = 45 → 4800→4755
+  const v = { decision: "grind", action: "propose", offer: 4600, lever_hit: null };
+  const info = actor.validateDecision(spec, { current_ask: 4800, grind_cap: 0.10, patience: 6 }, v);
+  check("validation uses session cap + patience", info && info.snapped === 4755 && v.offer === 4755, info);
 }
 {
   // same turn, worn-down actor: 12.5% of 600 = 75 → 4800→4725
-  const state = { current_ask: 4800, grind_cap: 0.10, patience: 0 };
-  const a = { reply: "Fine. 4600.", offer: 4600, action: "propose" };
-  const info = actor.clampConcession(specP, state, a, null, "4250");
-  check("low patience allows bigger grind", info && info.clamped === 4725, info);
+  const v = { decision: "grind", action: "propose", offer: 4600, lever_hit: null };
+  const info = actor.validateDecision(spec, { current_ask: 4800, grind_cap: 0.10, patience: 0 }, v);
+  check("low patience allows bigger grind", info && info.snapped === 4725, info);
 }
 
-// --- bare-offer crediting is scrubbed from no-lever concessions -----------------
+// --- buy direction: concession moves the ask UP -------------------------------------
 {
-  const out = actor.scrubBareOfferCredit("4000 is a fair shot, and I can respect that you're making a clean, direct offer. The unit has been serviced recently. Fine \u2014 since you're coming in at a solid number and skipping the usual dance, I can come down to 4672. Do we have a deal at 4672?", 4672);
-  check("crediting sentence removed", out.indexOf("fair shot") === -1 && out.indexOf("clean, direct") === -1, out);
-  check("crediting clause stripped, price kept", out.indexOf("4672") !== -1 && out.indexOf("skipping the usual dance") === -1, out);
-  check("neutral sentence kept", out.indexOf("serviced recently") !== -1, out);
-}
-{
-  const out = actor.scrubBareOfferCredit("4050 is closer, and I appreciate that you're moving up in clear steps. Since you recognize the value here, I can drop the price a bit further to 4550. Do we have a deal at 4550?", 4550);
-  check("appreciation sentence removed", out.indexOf("clear steps") === -1, out);
-  check("price sentence survives with clause stripped", out.indexOf("4550") !== -1 && out.indexOf("recognize the value") === -1, out);
-}
-{
-  const out = actor.scrubBareOfferCredit("Fine \u2014 since you're hauling it yourself, I can come down to 4620.", 4620);
-  check("non-crediting reply untouched", out.indexOf("hauling it yourself") !== -1 && out.indexOf("4620") !== -1, out);
-}
-{
-  const out = actor.scrubBareOfferCredit("I appreciate the direct offer.", null);
-  check("never returns empty reply", out.length > 0, out);
-}
-{
-  // integration: no-lever clamp also scrubs the crediting text
-  const state = { current_ask: 4800 };
-  const a = { reply: "That's a fair jump from nowhere. Since you're coming in with a clean, direct offer, I can come down to 4600. What do you say?", offer: 4600, action: "propose" };
-  const info = actor.clampConcession(spec, state, a, null, "I'm busy here 4000");
-  check("clamped + scrubbed", info && a.offer === 4752 && a.reply.indexOf("fair jump") === -1 && a.reply.indexOf("clean, direct") === -1 && a.reply.indexOf("4752") !== -1, a.reply);
+  const buySpec = { frame: "buy", direction: "buy", opening_price: 3000, floor_price: 3600, patience: 6, levers: { rewards: ["r1"] } };
+  const v = { decision: "grind", action: "continue", offer: 3400, lever_hit: null };
+  const info = actor.validateDecision(buySpec, { current_ask: 3000 }, v);
+  // span 600, 8% = 48 → 3000→3048
+  check("buy-side oversized grind snapped up", info && v.offer === 3048, { info, v });
 }
 
 console.log(failures ? `\n${failures} FAILURES` : "\nall tests passed");

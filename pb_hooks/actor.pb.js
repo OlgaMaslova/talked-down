@@ -90,12 +90,38 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   var maxTurns = actorLib.intOrDefault(spec.max_turns, 10);
   var currentTurns = actorLib.intOrDefault(state.turns, 0);
 
+  // Two-call pipeline: (1) the model DECIDES a structured move with a
+  // proposed price, (2) the server validates/snaps the price against the
+  // declared decision type (pure math), (3) a fresh model call WRITES the
+  // in-character reply given the final price — so text and price can never
+  // disagree and no reply rewriting is needed.
   var actor;
   try {
-    actor = actorLib.cleanActorResult(actorLib.chatJSON(
-      actorLib.buildActorMessages(scenario, spec, state, transcript, playerMessage),
-      { temperature: 0.7, context: "actor_turn" }
+    actor = actorLib.cleanDecision(actorLib.chatJSON(
+      actorLib.buildDeciderMessages(scenario, spec, state, transcript, playerMessage),
+      { temperature: 0.3, context: "actor_decide" }
     ));
+
+    // Accepts are exempt from price validation here: the accept branch below
+    // already validates floor + explicit player agreement.
+    if (actor.action !== "accept") {
+      var snapInfo = actorLib.validateDecision(spec, state, actor);
+      if (snapInfo) {
+        actorLib.logIncident(e.app, token, "decision_snapped", {
+          original: snapInfo.original,
+          snapped: snapInfo.snapped,
+          decision: snapInfo.decision,
+          lever_hit: snapInfo.lever_hit,
+          turn: currentTurns,
+        });
+      }
+    }
+
+    var spoken = actorLib.chatJSON(
+      actorLib.buildSpeakerMessages(scenario, spec, state, transcript, playerMessage, actor),
+      { temperature: 0.7, context: "actor_speak" }
+    );
+    actor.reply = String((spoken && spoken.reply) || "").trim() || "...";
   } catch (err) {
     console.log("actor_unavailable: " + err.message);
     actorLib.logIncident(e.app, token, "actor_unavailable", { error: err.message, turn: currentTurns });
@@ -106,22 +132,7 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     });
   }
 
-  // Mechanical concession enforcement: the model must have named a real,
-  // unused levers.rewards entry for a big step; otherwise the server clamps
-  // the price movement to a small grind. Accepts are exempt (the accept
-  // branch below already validates floor + player agreement).
-  var leverHit = actorLib.validateLeverHit(spec, state, actor.lever_hit, playerMessage);
-  if (actor.action !== "accept") {
-    var clampInfo = actorLib.clampConcession(spec, state, actor, leverHit, playerMessage);
-    if (clampInfo) {
-      actorLib.logIncident(e.app, token, "concession_clamped", {
-        original: clampInfo.original,
-        clamped: clampInfo.clamped,
-        lever_hit: clampInfo.lever_hit,
-        turn: currentTurns,
-      });
-    }
-  }
+  var leverHit = actor.action !== "accept" ? actorLib.validateLeverHit(spec, state, actor.lever_hit) : null;
 
   var nextTurns = currentTurns + 1;
   var nextPatience = actorLib.intOrDefault(state.patience, actorLib.intOrDefault(spec.patience, 10)) + actor.patience_delta;
