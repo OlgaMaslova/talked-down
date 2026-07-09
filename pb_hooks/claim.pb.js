@@ -238,7 +238,14 @@ routerAdd("GET", "/api/game/leaderboard", (e) => {
       if (dayNumber === lbActorLib.currentDayNumber()) {
         var todayScenario = lbActorLib.findTodaysScenario(e.app);
         if (todayScenario) {
-          var lbSpec = lbActorLib.getJSONField(todayScenario, "engine_config") || {};
+          var lbSpec = {};
+          try {
+            var lbSecret = lbActorLib.findSecretForScenario(e.app, todayScenario.id);
+            lbSpec = lbActorLib.getJSONField(lbSecret, "secret_spec", {}) || {};
+          } catch (specErr) {}
+          if (!lbSpec.currency) {
+            lbSpec = lbActorLib.getJSONField(todayScenario, "engine_config", {}) || lbSpec;
+          }
           currency = String(lbSpec.currency || "") || null;
         }
       }
