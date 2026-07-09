@@ -1065,3 +1065,16 @@ body {
     max-height: 78vh;
   }
 }
+
+.site-footer {
+  text-align: center;
+  padding: 0.6rem 1rem 1rem;
+  font-size: 0.68rem;
+  color: var(--muted, #6b7280);
+  opacity: 0.7;
+}
+
+.site-footer a {
+  color: inherit;
+  text-decoration: underline;
+}
