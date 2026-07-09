@@ -1,4 +1,5 @@
 import './styles.css';
+import logoUrl from './assets/logo.svg';
 import { pb, apiBaseUrl } from './pocketbase';
 import type { CharacterTurn, CharacterTurnState, NegotiationEngine } from './engine';
 import { createLlmEngine, MessageTooLongError } from './llmEngine';
@@ -305,6 +306,13 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   root.innerHTML = `
     <div class="game">
       <header class="game-header">
+        <div class="brand-row">
+          <img class="brand-logo" src="${logoUrl}" width="32" height="32" alt="" />
+          <div class="brand-copy">
+            <span class="brand-word">Talked Down</span>
+            <span class="brand-tagline">Talk the AI down. One negotiation a day.</span>
+          </div>
+        </div>
         <span class="day-badge">Talked Down #${ctx.dayNumber}</span>
         <h1 class="scenario-title">${escapeHtml(ctx.title)}</h1>
         <div class="character-line">
@@ -335,6 +343,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     </div>
   `;
 
+  const gameEl = root.querySelector<HTMLElement>('.game');
   const chatLog = root.querySelector<HTMLElement>('#chat-log');
   const inputRow = root.querySelector<HTMLFormElement>('#input-row');
   const chatInput = root.querySelector<HTMLInputElement>('#chat-input');
@@ -349,6 +358,44 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   }
 
   if (leaderboardBtnHeader) bindLeaderboardTrigger(leaderboardBtnHeader, ctx.dayNumber);
+
+  // ---- Mobile keyboard-safe viewport handling ----
+  // On phones, opening the on-screen keyboard shrinks the *visual* viewport
+  // without the *layout* viewport (100vh) changing, which lets the input
+  // row get pushed under the keyboard. We track window.visualViewport and
+  // pin the game container's height to it via a CSS custom property, then
+  // keep the chat scrolled to the latest message.
+  const isDesktopLayout = (): boolean =>
+    typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1024px)').matches;
+
+  const applyViewportHeight = (): void => {
+    const vv = window.visualViewport;
+    const height = vv ? vv.height : window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', `${height}px`);
+    // The desktop layout uses its own fixed/centered sizing (see the
+    // >=1024px media query); only pin .game to the live keyboard-safe
+    // height on the single-column mobile layout.
+    if (gameEl) gameEl.style.height = isDesktopLayout() ? '' : `${height}px`;
+    chatLog.scrollTop = chatLog.scrollHeight;
+  };
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', applyViewportHeight);
+    window.visualViewport.addEventListener('scroll', applyViewportHeight);
+  } else {
+    window.addEventListener('resize', applyViewportHeight);
+  }
+  applyViewportHeight();
+
+  // When the input gains focus the keyboard animates in; give it a beat
+  // before snapping the chat log to the bottom so the latest message stays
+  // visible above it.
+  chatInput.addEventListener('focus', () => {
+    window.setTimeout(() => {
+      applyViewportHeight();
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }, 300);
+  });
 
   const maxMessageChars = ctx.maxMessageChars;
 
@@ -603,6 +650,13 @@ function renderAlreadyPlayed(
   root.innerHTML = `
     <div class="game">
       <header class="game-header">
+        <div class="brand-row">
+          <img class="brand-logo" src="${logoUrl}" width="32" height="32" alt="" />
+          <div class="brand-copy">
+            <span class="brand-word">Talked Down</span>
+            <span class="brand-tagline">Talk the AI down. One negotiation a day.</span>
+          </div>
+        </div>
         <span class="day-badge">Talked Down #${effectiveDay}</span>
         <h1 class="scenario-title">You\u2019ve already played today\u2019s negotiation.</h1>
         <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
