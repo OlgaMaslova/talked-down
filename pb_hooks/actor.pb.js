@@ -110,16 +110,31 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   var nextPatience = actorLib.intOrDefault(state.patience, actorLib.intOrDefault(spec.patience, 10)) + actor.patience_delta;
   var action = actor.action;
   var accepted = false;
-  var pendingConfirmation = null;
 
   var isNonPrice = spec.frame === "non_price";
 
-  if (action === "accept" && isNonPrice) {
-    // Non-price scenario: no numeric offer to validate. Close when the player
-    // has already seen and answered a question: either a pending server-side
-    // proposal, or the actor's immediately previous message asked the player
-    // something (e.g. "Do you agree to these terms?") and this turn is the
-    // player's answer. Otherwise the accept becomes an explicit proposal.
+  // pending_offer: the offer currently on the table, recorded server-side.
+  // A number for price frames, the string "terms" for non-price frames.
+  // (Reads legacy pending_confirmation for sessions started before this change.)
+  var pendingOffer = typeof state.pending_offer !== "undefined" ? state.pending_offer : state.pending_confirmation;
+  if (typeof pendingOffer !== "string") {
+    pendingOffer = actorLib.numberOrNull(pendingOffer);
+  }
+
+  // A new number from the player is a counter: whatever was on the table is
+  // superseded before we evaluate the actor's move.
+  var playerNumbers = actorLib.numbersInText(playerMessage);
+  if (playerNumbers.length && actorLib.numberOrNull(pendingOffer) !== null && playerNumbers.indexOf(actorLib.numberOrNull(pendingOffer)) === -1) {
+    pendingOffer = null;
+  }
+
+  if (action === "propose") {
+    // First-class proposal: the actor puts a deal on the table. Nothing
+    // closes this turn; the server records exactly what is pending.
+    pendingOffer = isNonPrice ? "terms" : actorLib.numberOrNull(actor.offer);
+  } else if (action === "accept" && isNonPrice) {
+    // Non-price scenario: close only when terms were on the table (recorded
+    // proposal, or the actor's previous message ended with a question).
     var lastActorMessage = "";
     for (var ti = transcript.length - 1; ti >= 0; ti--) {
       if (transcript[ti] && transcript[ti].role === "actor") {
@@ -128,18 +143,19 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
       }
     }
     var actorJustAsked = /\?\s*$/.test(lastActorMessage);
-    if (state.pending_confirmation === "terms" || actorJustAsked) {
+    if (pendingOffer === "terms" || actorJustAsked) {
       accepted = true;
     } else {
-      action = "continue";
-      pendingConfirmation = "terms";
+      // Nothing was on the table: demote the close to a proposal.
+      action = "propose";
+      pendingOffer = "terms";
     }
   } else if (action === "accept") {
     var floorOk = actorLib.dealRespectsFloor(spec, actor.offer);
     var playerAgreed =
       actorLib.playerStatedPrice(transcript, playerMessage, actor.offer) ||
-      (actorLib.numberOrNull(state.pending_confirmation) !== null &&
-        actorLib.numberOrNull(state.pending_confirmation) === actorLib.numberOrNull(actor.offer));
+      (actorLib.numberOrNull(pendingOffer) !== null &&
+        actorLib.numberOrNull(pendingOffer) === actorLib.numberOrNull(actor.offer));
 
     if (floorOk && playerAgreed) {
       accepted = true;
@@ -151,11 +167,10 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
         turn: currentTurns,
       });
       // The actor tried to close at a price the player never stated or
-      // confirmed. Convert the close into an explicit proposal: the deal
-      // can only complete on the player's next turn, after they have seen
-      // and answered the "deal at X?" question.
-      action = "continue";
-      pendingConfirmation = actorLib.numberOrNull(actor.offer);
+      // confirmed. Demote the close into a proposal: the deal can only
+      // complete after the player answers the "deal at X?" question.
+      action = "propose";
+      pendingOffer = actorLib.numberOrNull(actor.offer);
     } else {
       actorLib.logIncident(e.app, token, "invalid_accept_floor", {
         offer: actor.offer,
@@ -164,6 +179,7 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
         turn: currentTurns,
       });
       action = "continue";
+      pendingOffer = null;
     }
   }
 
@@ -194,8 +210,8 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     device_id: priorDeviceId,
     handle: priorHandle,
   };
-  if (pendingConfirmation !== null) {
-    state.pending_confirmation = pendingConfirmation;
+  if (!accepted && pendingOffer !== null) {
+    state.pending_offer = pendingOffer;
   }
 
   transcript.push({ role: "player", message: playerMessage });
