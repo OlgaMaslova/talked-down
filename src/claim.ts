@@ -111,6 +111,20 @@ export function renderClaimWidget(container: HTMLElement, identity: DeviceIdenti
     return;
   }
 
+  // Local state can be stale (cleared storage, other browser profile): confirm
+  // with the server and hide the widget when this device is already claimed.
+  void fetch(`${apiBaseUrl}/api/claim/status?device_id=${encodeURIComponent(identity.deviceId)}`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      if (data && data.claimed) {
+        markClaimed(String(data.email || ''));
+        container.innerHTML = '';
+      }
+    })
+    .catch(() => {
+      // Best-effort check only; keep the widget when the status call fails.
+    });
+
   container.innerHTML = `
     <button type="button" class="claim-btn" id="claim-open-btn">🎖️ Claim ${escapeHtml(identity.handle)} — save your record forever</button>
     <form class="claim-form hidden" id="claim-form">

@@ -1,5 +1,6 @@
 /**
- * "🏆 Best negotiators" overlay: a read-only leaderboard of claimed handles,
+ * "🏆 Best negotiators" overlay: a read-only leaderboard of all players
+ * (claimed handles get a ✓ badge; unclaimed show their auto-handle),
  * scoped to today's day number or all-time. Mounted as a full-screen
  * overlay appended to <body> so it can be opened from any screen.
  */
@@ -8,6 +9,7 @@ import { apiBaseUrl } from './pocketbase';
 
 interface LeaderboardEntry {
   handle: string;
+  claimed?: boolean;
   best_score: number;
   plays: number;
 }
@@ -43,14 +45,14 @@ function escapeHtml(value: string): string {
 
 function renderRows(entries: LeaderboardEntry[]): string {
   if (entries.length === 0) {
-    return '<p class="leaderboard-empty">No claimed negotiators yet — be the first.</p>';
+    return '<p class="leaderboard-empty">No negotiators yet — be the first.</p>';
   }
   const rows = entries
     .map(
       (entry, index) => `
       <li class="leaderboard-row">
         <span class="lb-rank">${index + 1}</span>
-        <span class="lb-handle">${escapeHtml(entry.handle)}</span>
+        <span class="lb-handle">${escapeHtml(entry.handle)}${entry.claimed ? '<span class="claimed-badge" title="Handle claimed">✓</span>' : ''}</span>
         <span class="lb-score">${entry.best_score}/100</span>
         <span class="lb-plays">${entry.plays} play${entry.plays === 1 ? '' : 's'}</span>
       </li>`,

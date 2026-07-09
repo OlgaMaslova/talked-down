@@ -194,16 +194,20 @@ routerAdd("GET", "/api/game/leaderboard", (e) => {
     dayNumber = parseInt(raw, 10);
   }
 
-  var models = arrayOf(new DynamicModel({ handle: "", best_score: 0, plays: 0 }));
-  var sql = "SELECT c.handle AS handle, MAX(s.score) AS best_score, COUNT(s.id) AS plays " +
-    "FROM scores s INNER JOIN claims c ON c.device_id = s.device_id AND c.status = 'claimed' " +
+  var models = arrayOf(new DynamicModel({ handle: "", claimed: 0, best_score: 0, plays: 0 }));
+  var sql = "SELECT COALESCE(NULLIF(c.handle, ''), " +
+    "(SELECT s2.handle FROM scores s2 WHERE s2.device_id = s.device_id AND s2.handle != '' ORDER BY s2.created DESC LIMIT 1), " +
+    "'Anonymous') AS handle, " +
+    "CASE WHEN c.device_id IS NULL THEN 0 ELSE 1 END AS claimed, " +
+    "MAX(s.score) AS best_score, COUNT(s.id) AS plays " +
+    "FROM scores s LEFT JOIN claims c ON c.id = (SELECT c2.id FROM claims c2 WHERE c2.device_id = s.device_id AND c2.status = 'claimed' ORDER BY c2.claimed_at DESC LIMIT 1) " +
     "WHERE s.device_id != ''";
   var params = {};
   if (scope === "day") {
     sql += " AND s.day_number = {:day_number}";
     params.day_number = dayNumber;
   }
-  sql += " GROUP BY c.device_id, c.handle ORDER BY best_score DESC, plays ASC, c.handle ASC LIMIT 20";
+  sql += " GROUP BY s.device_id ORDER BY best_score DESC, plays ASC, handle ASC LIMIT 20";
   try {
     var q = e.app.db().newQuery(sql);
     if (scope === "day") {
@@ -216,7 +220,25 @@ routerAdd("GET", "/api/game/leaderboard", (e) => {
   }
   var entries = [];
   for (var i = 0; i < models.length; i++) {
-    entries.push({ handle: String(models[i].handle || ""), best_score: Number(models[i].best_score || 0), plays: Number(models[i].plays || 0) });
+    entries.push({ handle: String(models[i].handle || ""), claimed: Number(models[i].claimed || 0) === 1, best_score: Number(models[i].best_score || 0), plays: Number(models[i].plays || 0) });
   }
   return e.json(200, { scope: scope, entries: entries });
+});
+
+routerAdd("GET", "/api/claim/status", (e) => {
+  var query = e.request.url.query();
+  var deviceId = String(query.get("device_id") || "").trim().slice(0, 64);
+  if (!deviceId) {
+    return e.json(400, { error: "invalid_request" });
+  }
+  try {
+    var record = e.app.findFirstRecordByFilter(
+      "claims",
+      "device_id = {:device_id} && status = 'claimed'",
+      { device_id: deviceId }
+    );
+    return e.json(200, { claimed: true, handle: record.getString("handle"), email: record.getString("email") });
+  } catch (err) {
+    return e.json(200, { claimed: false });
+  }
 });
