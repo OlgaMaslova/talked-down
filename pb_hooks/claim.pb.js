@@ -196,7 +196,7 @@ routerAdd("GET", "/api/game/leaderboard", (e) => {
 
   var models = arrayOf(new DynamicModel({ handle: "", claimed: 0, best_score: 0, plays: 0 }));
   var sql = "SELECT COALESCE(NULLIF(c.handle, ''), " +
-    "(SELECT s2.handle FROM scores s2 WHERE s2.device_id = s.device_id AND s2.handle != '' ORDER BY s2.created DESC LIMIT 1), " +
+    "(SELECT s2.handle FROM scores s2 WHERE s2.device_id = s.device_id AND s2.handle != '' ORDER BY s2.rowid DESC LIMIT 1), " +
     "'Anonymous') AS handle, " +
     "CASE WHEN c.device_id IS NULL THEN 0 ELSE 1 END AS claimed, " +
     "MAX(s.score) AS best_score, COUNT(s.id) AS plays " +
