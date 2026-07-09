@@ -135,5 +135,33 @@ const specP = { ...spec, patience: 6 };
   check("low patience allows bigger grind", info && info.clamped === 4725, info);
 }
 
+// --- bare-offer crediting is scrubbed from no-lever concessions -----------------
+{
+  const out = actor.scrubBareOfferCredit("4000 is a fair shot, and I can respect that you're making a clean, direct offer. The unit has been serviced recently. Fine \u2014 since you're coming in at a solid number and skipping the usual dance, I can come down to 4672. Do we have a deal at 4672?", 4672);
+  check("crediting sentence removed", out.indexOf("fair shot") === -1 && out.indexOf("clean, direct") === -1, out);
+  check("crediting clause stripped, price kept", out.indexOf("4672") !== -1 && out.indexOf("skipping the usual dance") === -1, out);
+  check("neutral sentence kept", out.indexOf("serviced recently") !== -1, out);
+}
+{
+  const out = actor.scrubBareOfferCredit("4050 is closer, and I appreciate that you're moving up in clear steps. Since you recognize the value here, I can drop the price a bit further to 4550. Do we have a deal at 4550?", 4550);
+  check("appreciation sentence removed", out.indexOf("clear steps") === -1, out);
+  check("price sentence survives with clause stripped", out.indexOf("4550") !== -1 && out.indexOf("recognize the value") === -1, out);
+}
+{
+  const out = actor.scrubBareOfferCredit("Fine \u2014 since you're hauling it yourself, I can come down to 4620.", 4620);
+  check("non-crediting reply untouched", out.indexOf("hauling it yourself") !== -1 && out.indexOf("4620") !== -1, out);
+}
+{
+  const out = actor.scrubBareOfferCredit("I appreciate the direct offer.", null);
+  check("never returns empty reply", out.length > 0, out);
+}
+{
+  // integration: no-lever clamp also scrubs the crediting text
+  const state = { current_ask: 4800 };
+  const a = { reply: "That's a fair jump from nowhere. Since you're coming in with a clean, direct offer, I can come down to 4600. What do you say?", offer: 4600, action: "propose" };
+  const info = actor.clampConcession(spec, state, a, null, "I'm busy here 4000");
+  check("clamped + scrubbed", info && a.offer === 4752 && a.reply.indexOf("fair jump") === -1 && a.reply.indexOf("clean, direct") === -1 && a.reply.indexOf("4752") !== -1, a.reply);
+}
+
 console.log(failures ? `\n${failures} FAILURES` : "\nall tests passed");
 process.exit(failures ? 1 : 0);
