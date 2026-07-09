@@ -348,6 +348,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           <input id="chat-input" type="text" placeholder="Type your offer or say something…" autocomplete="off" maxlength="${ctx.maxMessageChars}" />
           <span class="char-counter" id="char-counter">0/${ctx.maxMessageChars}</span>
         </div>
+        <button type="button" id="accept-btn" title="Accept the current offer">🤝 Accept</button>
         <button type="submit" id="send-btn" disabled>Send</button>
       </form>
       <div class="end-panel hidden" id="end-panel"></div>
@@ -359,6 +360,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const inputRow = root.querySelector<HTMLFormElement>('#input-row');
   const chatInput = root.querySelector<HTMLInputElement>('#chat-input');
   const sendBtn = root.querySelector<HTMLButtonElement>('#send-btn');
+  const acceptBtn = root.querySelector<HTMLButtonElement>('#accept-btn');
   const charCounter = root.querySelector<HTMLElement>('#char-counter');
   const askValue = root.querySelector<HTMLElement>('#ask-value');
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
@@ -423,6 +425,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     if (!chatInput.disabled) {
       sendBtn.disabled = len === 0 || overCap;
     }
+    if (acceptBtn) acceptBtn.disabled = chatInput.disabled;
   };
   chatInput.addEventListener('input', updateInputState);
   updateInputState();
@@ -464,13 +467,17 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
   addBubble(chatLog, 'character', ctx.openingMessage);
 
+  let lastKnownAsk: number | null = ctx.showAsk ? initialTurn.state.currentAsk : null;
+
   const applyState = (turn: CharacterTurn): void => {
+    lastKnownAsk = turn.state.currentAsk;
     if (askValue) askValue.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
   };
 
   const endGame = (turn: CharacterTurn): void => {
     chatInput.disabled = true;
     sendBtn.disabled = true;
+    if (acceptBtn) acceptBtn.disabled = true;
 
     const outcome: 'deal' | 'no_deal' = turn.outcome === 'deal' ? 'deal' : 'no_deal';
     const { score, label } = ctx.scoreTurn(turn);
@@ -571,10 +578,8 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     }
   };
 
-  inputRow.addEventListener('submit', (event) => {
-    event.preventDefault();
+  const sendPlayerMessage = (text: string): void => {
     if (chatInput.disabled) return;
-    const text = chatInput.value.trim();
     if (!text || text.length > maxMessageChars) return;
 
     hideOpenerChips();
@@ -618,7 +623,27 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         chatInput.focus();
         updateInputState();
       });
+  };
+
+  inputRow.addEventListener('submit', (event) => {
+    event.preventDefault();
+    sendPlayerMessage(chatInput.value.trim());
   });
+
+  // One-tap acceptance: sends an explicit agreement message through the
+  // normal turn path (the character only closes when the terms line up,
+  // same as a typed "deal").
+  if (acceptBtn) {
+    acceptBtn.addEventListener('click', () => {
+      if (chatInput.disabled) return;
+      const current = lastKnownAsk;
+      const text =
+        ctx.showAsk && current !== null
+          ? `Deal — I accept your price of ${formatAsk(current, ctx.currency)}.`
+          : 'Deal — I accept your offer.';
+      sendPlayerMessage(text.slice(0, maxMessageChars));
+    });
+  }
 }
 
 function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: number): void {
