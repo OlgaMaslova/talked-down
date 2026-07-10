@@ -68,6 +68,13 @@ export interface NegotiationEngine {
    * error) — callers must not treat a rejection as consuming the turn.
    */
   respond(userMessage: string): Promise<CharacterTurn>;
+  /**
+   * Directly accepts the character's current offer, finalizing the game.
+   * Resolves with a terminal turn (done=true) without generating a fresh
+   * character chat message intended for the transcript. May reject (e.g. a
+   * network error) — callers must not treat a rejection as ending the game.
+   */
+  accept(): Promise<CharacterTurn>;
 }
 
 const MAX_TURNS = 10;
@@ -232,5 +239,13 @@ export function createRuleEngine(config: EngineConfig): NegotiationEngine {
     return snapshot(message, outcome, dealPrice);
   }
 
-  return { start, respond };
+  async function accept(): Promise<CharacterTurn> {
+    if (done) {
+      return snapshot('');
+    }
+    done = true;
+    return snapshot('', 'deal', currentAsk);
+  }
+
+  return { start, respond, accept };
 }

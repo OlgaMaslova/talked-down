@@ -701,10 +701,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
   addBubble(chatLog, 'character', ctx.openingMessage);
 
-  let lastKnownAsk: number | null = ctx.showAsk ? initialTurn.state.currentAsk : null;
-
   const applyState = (turn: CharacterTurn): void => {
-    lastKnownAsk = turn.state.currentAsk;
     if (askValueComposer && ctx.showAsk) askValueComposer.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
   };
 
@@ -970,18 +967,33 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     sendPlayerMessage(chatInput.value.trim());
   });
 
-  // One-tap acceptance: sends an explicit agreement message through the
-  // normal turn path (the character only closes when the terms line up,
-  // same as a typed "deal").
+  // One-tap acceptance: finalizes the game directly against the accept
+  // endpoint — no synthetic agreement message, no new chat bubbles — and
+  // renders the terminal result card as soon as the server confirms.
   if (acceptBtn) {
     acceptBtn.addEventListener('click', () => {
-      if (chatInput.disabled || !hasNegotiated) return;
-      const current = lastKnownAsk;
-      const text =
-        ctx.showAsk && current !== null
-          ? `Deal — I accept your price of ${formatAsk(current, ctx.currency)}.`
-          : 'Deal — I accept your offer.';
-      sendPlayerMessage(text.slice(0, maxMessageChars));
+      if (awaitingTurn || gameEnded || !hasNegotiated) return;
+
+      hideOpenerChips();
+      awaitingTurn = true;
+      updateInputState();
+
+      void ctx.engine
+        .accept()
+        .then((turn) => {
+          if (gameEnded) return;
+          applyState(turn);
+          endGame(turn);
+          chatLog.scrollTop = chatLog.scrollHeight;
+        })
+        .catch(() => {
+          if (gameEnded) return;
+          // Nothing was finalized server-side from the client's point of
+          // view: unlock the controls so the player can try again.
+          awaitingTurn = false;
+          addBubble(chatLog, 'system', 'The line went quiet — try accepting again.');
+          updateInputState();
+        });
     });
   }
 

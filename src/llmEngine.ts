@@ -70,5 +70,20 @@ export function createLlmEngine(sessionToken: string, startState: CharacterTurnS
     return data;
   }
 
-  return { start, respond };
+  async function accept(): Promise<CharacterTurn> {
+    const res = await fetch(`${apiBaseUrl}/api/game/session/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_token: sessionToken }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Negotiation accept request failed (${res.status})`);
+    }
+
+    const data = (await res.json()) as CharacterTurn;
+    return data;
+  }
+
+  return { start, respond, accept };
 }

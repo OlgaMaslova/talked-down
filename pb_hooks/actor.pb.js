@@ -356,6 +356,84 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   return e.json(200, response);
 });
 
+// Direct accept: the player takes the offer currently on the table (the
+// actor's current ask). Closes the session as a deal immediately with no
+// LLM calls (no decider/speaker/notary) and without consuming a turn.
+routerAdd("POST", "/api/game/session/accept", (e) => {
+  var actorLib = require(__hooks + "/lib/actor.js");
+  var body = e.requestInfo().body || {};
+  var token = String(body.session_token || "");
+
+  if (!token) {
+    return e.json(404, { error: "session_not_found" });
+  }
+
+  var session;
+  try {
+    session = e.app.findFirstRecordByData("sessions", "token", token);
+  } catch (err) {
+    return e.json(404, { error: "session_not_found" });
+  }
+
+  if (session.getString("status") !== "active") {
+    return e.json(409, { error: "session_not_active" });
+  }
+
+  var scenario = e.app.findRecordById("scenarios", session.getString("scenario"));
+  var secretRecord = actorLib.findSecretForScenario(e.app, scenario.id);
+  var spec = actorLib.getJSONField(secretRecord, "secret_spec", {});
+  var state = actorLib.getJSONField(session, "state", {});
+
+  var isNonPrice = spec.frame === "non_price";
+  var dealPrice = isNonPrice ? null : actorLib.numberOrNull(state.current_ask);
+  var outcome = "deal";
+  var turnsUsed = actorLib.intOrDefault(state.turns, 0);
+  var patienceLeft = actorLib.intOrDefault(state.patience, actorLib.intOrDefault(spec.patience, 10));
+
+  // Deterministic agreement record: the player accepted the standing offer,
+  // so no LLM notary pass is needed (or wanted) here.
+  session.set("agreement", JSON.stringify({
+    deal: true,
+    price: dealPrice,
+    terms: [],
+    summary: isNonPrice
+      ? "Player accepted the terms on the table."
+      : "Player accepted the standing ask" + (dealPrice !== null ? " of " + dealPrice : "") + ".",
+  }));
+
+  // State is preserved as-is (turns, patience, current_ask, replay/archive
+  // fields); only the terminal status changes.
+  session.set("state", JSON.stringify(state));
+  session.set("status", "deal");
+  e.app.save(session);
+
+  var scoreResult;
+  if (state.device_id === "calibration") {
+    // Calibration self-play: score deterministically but never write a
+    // score record, so calibration runs cannot pollute daily rankings.
+    scoreResult = actorLib.computeServerScore(spec, outcome, dealPrice, turnsUsed, patienceLeft);
+    scoreResult.percentile = null;
+  } else {
+    // Replay/archive sessions stay unranked via the existing score guards.
+    scoreResult = actorLib.saveServerScoreBestEffort(e.app, scenario, spec, outcome, dealPrice, turnsUsed, patienceLeft, token, state);
+  }
+
+  var response = {
+    done: true,
+    state: actorLib.responseState(state),
+    outcome: outcome,
+  };
+  if (dealPrice !== null) {
+    response.dealPrice = dealPrice;
+  }
+  if (scoreResult) {
+    response.score = scoreResult.score;
+    response.label = scoreResult.label;
+    response.percentile = scoreResult.percentile;
+  }
+  return e.json(200, response);
+});
+
 // Superuser-only: open a negotiation session for ANY scenario (by id or
 // scenario_date), so the self-play calibration harness can exercise
 // non-today scenarios. Regular turn flow is reused unchanged.
