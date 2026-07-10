@@ -38,23 +38,36 @@ interface SessionStartNoLlm {
   llm: false;
 }
 
+const REPLAY_DURATION_MS = 3 * 60 * 1000;
+
+type ReplayTimerStatus = 'active' | 'paused' | 'expired';
+
+/** A normalized, client-safe view of the server's replay timer. */
+interface ReplayTimerSnapshot {
+  /** Remaining time is authoritative whenever the server supplies it. */
+  remainingMs: number;
+  status: ReplayTimerStatus;
+  elapsedMs?: number;
+  expiresAtMs?: number;
+}
+
 /** Unranked replay returned by POST /api/game/replay/start. */
 interface ReplaySessionStart {
   llm: true;
   session_token: string;
   scenario: LlmScenario;
+  /** Expected shape: { remaining_ms, status, elapsed_ms, expires_at_ms? }. */
+  replay?: Record<string, unknown>;
 }
 
 type ReplayStartResult =
-  | { ok: true; session: ReplaySessionStart }
+  | { ok: true; session: ReplaySessionStart; timer: ReplayTimerSnapshot }
   | { ok: false; error: string };
 
 /** Returned by session/start when this device already finished today's game. */
 interface SessionStartAlreadyPlayed {
   llm: true;
   already_played: true;
-  /** Absolute epoch time after which today's replay can be started. */
-  replay_available_at_ms: number;
   result: {
     score: number;
     result_label: string;
@@ -161,7 +174,14 @@ async function startReplaySession(identity: DeviceIdentity): Promise<ReplayStart
       };
     }
     if (data && data.llm === true && typeof data.session_token === 'string' && data.scenario) {
-      return { ok: true, session: data as ReplaySessionStart };
+      // The start response establishes the only initial visual-clock value.
+      // A missing timer is tolerated for older deployments, but all supplied
+      // `remaining_ms` values are used verbatim by readReplayTimer.
+      return {
+        ok: true,
+        session: data as ReplaySessionStart,
+        timer: readReplayTimer(data) ?? defaultReplayTimer(),
+      };
     }
     return { ok: false, error: 'Unable to start a replay right now.' };
   } catch {
@@ -323,10 +343,9 @@ async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 // A game or result card replaces the entire view. Keep viewport listeners and
-// result-card countdowns in one place so no replaced view keeps ticking.
+// timer intervals in one place so no replaced view keeps ticking.
 let activeViewportCleanup: (() => void) | null = null;
 const activeResultCountdowns = new Set<number>();
-const REPLAY_COOLDOWN_MS = 3 * 60 * 1000;
 
 function clearGameRuntime(): void {
   activeViewportCleanup?.();
@@ -335,61 +354,261 @@ function clearGameRuntime(): void {
   activeResultCountdowns.clear();
 }
 
-function formatReplayCooldown(remainingMs: number): string {
+function formatReplayTime(remainingMs: number): string {
   const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
   return `${pad2(Math.floor(totalSeconds / 60))}:${pad2(totalSeconds % 60)}`;
 }
 
-function replayCooldownActionHtml(): string {
+function asFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Normalizes timer payloads from replay endpoints. The documented payload is
+ * nested under `replay`, but accepting a direct timer object and numeric
+ * strings keeps the UI compatible with small response-shape variations.
+ */
+function readReplayTimer(payload: unknown): ReplayTimerSnapshot | null {
+  const source = isRecord(payload) && isRecord(payload.replay) ? payload.replay : payload;
+  if (!isRecord(source)) return null;
+
+  // `remaining_ms` wins over all fallbacks: it is the server's authoritative
+  // value after start, pause, and resume.
+  const suppliedRemainingMs = asFiniteNumber(source.remaining_ms);
+  const expiresAtMs = asFiniteNumber(source.expires_at_ms);
+  const remainingMs = suppliedRemainingMs ?? (expiresAtMs === null ? null : Math.max(0, expiresAtMs - Date.now()));
+  if (remainingMs === null) return null;
+
+  const rawStatus = typeof source.status === 'string' ? source.status.toLowerCase() : '';
+  const status: ReplayTimerStatus =
+    remainingMs <= 0 || rawStatus === 'expired' || rawStatus === 'complete' || rawStatus === 'completed'
+      ? 'expired'
+      : rawStatus === 'paused' || rawStatus === 'pause'
+        ? 'paused'
+        : 'active';
+  const elapsedMs = asFiniteNumber(source.elapsed_ms);
+
+  return {
+    remainingMs: Math.max(0, remainingMs),
+    status,
+    ...(elapsedMs === null ? {} : { elapsedMs: Math.max(0, elapsedMs) }),
+    ...(expiresAtMs === null ? {} : { expiresAtMs }),
+  };
+}
+
+function defaultReplayTimer(): ReplayTimerSnapshot {
+  return { remainingMs: REPLAY_DURATION_MS, status: 'active' };
+}
+
+function replayStartActionHtml(): string {
   return `
     <div class="replay-action">
-      <button class="replay-btn" id="replay-btn" type="button" disabled aria-describedby="replay-status">↻ Replay in 03:00</button>
-      <p class="replay-status" id="replay-status">Replay available in <span class="replay-cooldown" id="replay-cooldown" role="timer" aria-live="off">03:00</span></p>
+      <button class="replay-btn" id="replay-btn" type="button" aria-describedby="replay-status">↻ Start 3-minute replay</button>
+      <p class="replay-status" id="replay-status">Practice this negotiation immediately. Replays are unranked.</p>
     </div>
   `;
 }
 
-/** Mounts a local display of a server-enforced replay availability time. */
-function startReplayCooldown(
-  button: HTMLButtonElement,
-  status: HTMLElement,
-  countdown: HTMLElement,
-  replayAvailableAtMs: number,
-): void {
-  let interval: number | null = null;
-  const stop = (): void => {
-    if (interval !== null) {
-      window.clearInterval(interval);
-      activeResultCountdowns.delete(interval);
-      interval = null;
+type ReplayTimerAction = 'pause' | 'resume';
+type ReplayTimerActionResult =
+  | { ok: true; timer: ReplayTimerSnapshot }
+  | { ok: false; code?: string; error: string };
+
+/** Send a server-authoritative replay timer transition using the session token. */
+async function changeReplayTimer(sessionToken: string, action: ReplayTimerAction): Promise<ReplayTimerActionResult> {
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/game/replay/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_token: sessionToken }),
+    });
+    const data: unknown = await res.json().catch(() => null);
+    const timer = readReplayTimer(data);
+
+    if (!res.ok) {
+      const code = isRecord(data) && typeof data.error === 'string' ? data.error : undefined;
+      return {
+        ok: false,
+        ...(code ? { code } : {}),
+        error:
+          code === 'replay_expired'
+            ? 'This replay has expired.'
+            : code === 'replay_paused'
+              ? 'This replay is paused.'
+              : 'Unable to update the replay timer. Please try again.',
+      };
     }
+    if (!timer) {
+      return { ok: false, error: 'The replay timer could not be synchronized. Please try again.' };
+    }
+    return { ok: true, timer };
+  } catch {
+    return { ok: false, error: 'Network hiccup — the replay timer was not changed.' };
+  }
+}
+
+interface ReplayTimerElements {
+  value: HTMLElement;
+  status: HTMLElement;
+  pauseButton: HTMLButtonElement;
+  resumeButton: HTMLButtonElement;
+}
+
+/**
+ * Keeps the visual clock smooth between server transitions. Each start,
+ * pause, and resume response resets it from `remaining_ms`; the clock is
+ * deliberately frozen whenever the server says the replay is paused.
+ */
+class ReplayTimerController {
+  private remainingMs: number;
+  private status: ReplayTimerStatus;
+  private syncedAtMs: number;
+  private interval: number | null = null;
+  private busy = false;
+  private notice = '';
+
+  constructor(
+    private readonly sessionToken: string,
+    private readonly elements: ReplayTimerElements,
+    initial: ReplayTimerSnapshot,
+    private readonly onStateChange: () => void,
+    private readonly onExpired: () => void,
+  ) {
+    this.remainingMs = initial.remainingMs;
+    this.status = initial.status;
+    this.syncedAtMs = Date.now();
+    this.elements.pauseButton.addEventListener('click', this.handlePause);
+    this.elements.resumeButton.addEventListener('click', this.handleResume);
+    this.render();
+    if (this.status === 'active') this.startTicking();
+    else if (this.status === 'expired') this.onExpired();
+  }
+
+  isPaused(): boolean {
+    return this.status === 'paused';
+  }
+
+  applyServerTimer(timer: ReplayTimerSnapshot): void {
+    this.remainingMs = timer.remainingMs;
+    this.status = timer.status;
+    this.syncedAtMs = Date.now();
+    this.notice = '';
+    if (this.status === 'active') this.startTicking();
+    else this.stopTicking();
+    this.render();
+    this.onStateChange();
+  }
+
+  /** A replay_paused turn response is itself server confirmation to freeze now. */
+  freezeFromPausedResponse(): void {
+    if (this.status === 'expired') return;
+    this.remainingMs = this.currentRemainingMs();
+    this.status = 'paused';
+    this.syncedAtMs = Date.now();
+    this.stopTicking();
+    this.render();
+    this.onStateChange();
+  }
+
+  destroy(): void {
+    this.stopTicking();
+    this.elements.pauseButton.removeEventListener('click', this.handlePause);
+    this.elements.resumeButton.removeEventListener('click', this.handleResume);
+  }
+
+  private readonly handlePause = (): void => {
+    void this.requestChange('pause');
   };
-  const update = (): void => {
-    if (!button.isConnected || !status.isConnected || !countdown.isConnected) {
-      stop();
+
+  private readonly handleResume = (): void => {
+    void this.requestChange('resume');
+  };
+
+  private currentRemainingMs(): number {
+    if (this.status !== 'active') return this.remainingMs;
+    return Math.max(0, this.remainingMs - (Date.now() - this.syncedAtMs));
+  }
+
+  private startTicking(): void {
+    if (this.interval !== null || this.status !== 'active') return;
+    this.interval = window.setInterval(() => this.render(), 250);
+    activeResultCountdowns.add(this.interval);
+  }
+
+  private stopTicking(): void {
+    if (this.interval === null) return;
+    window.clearInterval(this.interval);
+    activeResultCountdowns.delete(this.interval);
+    this.interval = null;
+  }
+
+  private render(): void {
+    const remainingMs = this.currentRemainingMs();
+    const timerText = formatReplayTime(remainingMs);
+    this.elements.value.textContent = timerText;
+    this.elements.value.setAttribute('aria-label', `Replay time remaining: ${timerText}`);
+
+    if (this.status === 'active' && remainingMs <= 0) {
+      this.remainingMs = 0;
+      this.status = 'expired';
+      this.stopTicking();
+      this.render();
+      this.onStateChange();
+      this.onExpired();
       return;
     }
 
-    const remainingMs = Math.max(0, replayAvailableAtMs - Date.now());
-    if (remainingMs === 0) {
-      button.disabled = false;
-      button.textContent = '↻ Replay now';
-      status.setAttribute('aria-live', 'polite');
-      status.textContent = 'Replay is ready.';
-      stop();
+    const paused = this.status === 'paused';
+    const expired = this.status === 'expired';
+    this.elements.value.closest<HTMLElement>('.replay-timer')?.classList.toggle('is-paused', paused);
+    this.elements.value.closest<HTMLElement>('.replay-timer')?.classList.toggle('is-expired', expired);
+    this.elements.status.textContent = expired
+      ? 'Replay time has expired.'
+      : paused
+        ? `Replay paused — ${timerText} remaining.`
+        : this.busy
+          ? 'Updating replay timer…'
+          : this.notice || 'Replay is active.';
+    this.elements.pauseButton.disabled = this.busy || this.status !== 'active';
+    this.elements.resumeButton.disabled = this.busy || this.status !== 'paused';
+  }
+
+  private async requestChange(action: ReplayTimerAction): Promise<void> {
+    if (this.busy || (action === 'pause' && this.status !== 'active') || (action === 'resume' && this.status !== 'paused')) {
+      return;
+    }
+    this.busy = true;
+    this.notice = '';
+    this.render();
+    const result = await changeReplayTimer(this.sessionToken, action);
+    this.busy = false;
+
+    if (!result.ok) {
+      if (result.code === 'replay_expired') {
+        this.remainingMs = 0;
+        this.status = 'expired';
+        this.stopTicking();
+        this.render();
+        this.onStateChange();
+        this.onExpired();
+        return;
+      }
+      if (result.code === 'replay_paused') this.freezeFromPausedResponse();
+      this.notice = result.error;
+      this.render();
       return;
     }
 
-    const formatted = formatReplayCooldown(remainingMs);
-    button.disabled = true;
-    button.textContent = `↻ Replay in ${formatted}`;
-    countdown.textContent = formatted;
-  };
-
-  update();
-  if (button.disabled) {
-    interval = window.setInterval(update, 1000);
-    activeResultCountdowns.add(interval);
+    this.applyServerTimer(result.timer);
   }
 }
 
@@ -435,6 +654,55 @@ function showBanner(message: string, kind: 'success' | 'error'): void {
   }, 4200);
 }
 
+/** A replay-specific turn failure that needs different UX from a normal failed turn. */
+class ReplayTurnError extends Error {
+  constructor(
+    readonly code: 'replay_paused' | 'replay_expired',
+    readonly timer: ReplayTimerSnapshot | null,
+  ) {
+    super(code === 'replay_paused' ? 'Replay is paused' : 'Replay has expired');
+    this.name = 'ReplayTurnError';
+  }
+}
+
+/**
+ * Replays use the ordinary session/turn contract, while retaining the replay
+ * error body so paused/expired states never appear as generic negotiation
+ * failures. Daily and archive sessions continue to use createLlmEngine.
+ */
+function createReplayLlmEngine(sessionToken: string, startState: CharacterTurnState): NegotiationEngine {
+  return {
+    start: () => ({ message: '', done: false, state: startState }),
+    respond: async (userMessage: string): Promise<CharacterTurn> => {
+      const res = await fetch(`${apiBaseUrl}/api/game/session/turn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_token: sessionToken, message: userMessage }),
+      });
+      const data: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const errorCode = isRecord(data) && typeof data.error === 'string' ? data.error : '';
+        if (errorCode === 'message_too_long') {
+          const maxMessageChars = isRecord(data) ? asFiniteNumber(data.max_message_chars) : null;
+          throw new MessageTooLongError(maxMessageChars ?? DEFAULT_MAX_MESSAGE_CHARS);
+        }
+        if (errorCode === 'replay_paused' || errorCode === 'replay_expired') {
+          throw new ReplayTurnError(errorCode, readReplayTimer(data));
+        }
+        throw new Error(`Negotiation turn request failed (${res.status})`);
+      }
+
+      return data as CharacterTurn;
+    },
+  };
+}
+
+interface ReplayGameConfig {
+  sessionToken: string;
+  timer: ReplayTimerSnapshot;
+}
+
 /** Everything renderGame needs, whether the negotiation is rule-engine or LLM driven. */
 interface GameContext {
   dayNumber: number;
@@ -456,8 +724,8 @@ interface GameContext {
   recordScore: (score: number, label: string, turn: CharacterTurn) => Promise<void>;
   /** True when this session is a replay of a past day: unranked, no streak/percentile/claim. */
   archive?: boolean;
-  /** Unranked replay of today's scenario. */
-  replay?: boolean;
+  /** Unranked, timed replay of today's scenario. */
+  replay?: ReplayGameConfig;
 }
 
 function renderGame(root: HTMLElement, ctx: GameContext): void {
@@ -491,6 +759,18 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         </div>
         ${ctx.playerBrief ? `<p class="player-brief">${escapeHtml(ctx.playerBrief)}</p>` : ''}
         <p class="house-rules">📜 House rules: ${ctx.maxTurns} message${ctx.maxTurns === 1 ? '' : 's'} max, ${ctx.maxMessageChars} characters each.</p>
+        ${
+          ctx.replay
+            ? `<section class="replay-timer" aria-label="Timed replay controls">
+              <div class="replay-timer-heading"><span>Replay time</span><time class="replay-timer-value" id="replay-timer-value" role="timer" aria-live="polite" aria-atomic="true">${formatReplayTime(ctx.replay.timer.remainingMs)}</time></div>
+              <p class="replay-timer-status" id="replay-timer-status" role="status" aria-live="polite">Replay is active.</p>
+              <div class="replay-timer-controls" aria-label="Replay timer controls">
+                <button class="replay-control-btn" id="replay-pause-btn" type="button">Pause</button>
+                <button class="replay-control-btn" id="replay-resume-btn" type="button" disabled>Resume</button>
+              </div>
+            </section>`
+            : ''
+        }
         <div class="header-buttons">
           <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
           <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">🗓️ Past negotiations</button>
@@ -539,6 +819,10 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
   const leaderboardBtnHeader = root.querySelector<HTMLButtonElement>('#leaderboard-btn-header');
   const archiveBtnHeader = root.querySelector<HTMLButtonElement>('#archive-btn-header');
+  const replayTimerValue = root.querySelector<HTMLElement>('#replay-timer-value');
+  const replayTimerStatus = root.querySelector<HTMLElement>('#replay-timer-status');
+  const replayPauseButton = root.querySelector<HTMLButtonElement>('#replay-pause-btn');
+  const replayResumeButton = root.querySelector<HTMLButtonElement>('#replay-resume-btn');
 
   if (!chatLog || !inputRow || !chatInput || !sendBtn || !charCounter || !endPanel) {
     return;
@@ -602,6 +886,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   let hasNegotiated = false;
   let awaitingTurn = false;
   let gameEnded = false;
+  let replayTimer: ReplayTimerController | null = null;
 
   // Live character counter + send gating: disabled when empty or over the
   // per-message house-rule cap (maxlength on the input already blocks most
@@ -611,7 +896,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     charCounter.textContent = `${len}/${maxMessageChars}`;
     const overCap = len > maxMessageChars;
     const nearCap = len >= Math.floor(maxMessageChars * 0.9);
-    const locked = awaitingTurn || gameEnded;
+    const locked = awaitingTurn || gameEnded || replayTimer?.isPaused() === true;
     charCounter.classList.toggle('over', overCap);
     charCounter.classList.toggle('warning', !overCap && nearCap);
     chatInput.disabled = locked;
@@ -668,51 +953,34 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     if (askValue) askValue.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
   };
 
-  const renderReplayEndCard = (turn: CharacterTurn): void => {
+  const renderReplayTerminalCard = (
+    title: string,
+    detail: string,
+    outcomeClass: 'deal' | 'no-deal' | 'timeout',
+  ): void => {
     if (!ctx.replay || gameEnded) return;
 
     gameEnded = true;
     awaitingTurn = false;
+    replayTimer?.destroy();
     updateInputState();
     openerChips?.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
       button.disabled = true;
     });
-
-    const outcome: 'deal' | 'no_deal' = turn.outcome === 'deal' ? 'deal' : 'no_deal';
-    const resultTitle = outcome === 'deal' ? '🤝 Replay complete' : '💥 Replay complete';
-    const resultDetail =
-      outcome === 'deal'
-        ? `Closed in ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}.`
-        : `No deal after ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}.`;
-    // A replay completion is the new cooldown source, so do not expose a
-    // second replay until this fresh local window has elapsed.
-    const replayAvailableAtMs = Date.now() + REPLAY_COOLDOWN_MS;
 
     endPanel.classList.remove('hidden');
     endPanel.innerHTML = `
       <div class="end-card replay-end-card">
         <span class="replay-end-badge">↻ Replay · unranked</span>
         <div class="end-result">
-          <p class="end-outcome ${outcome === 'deal' ? 'deal' : 'no-deal'}">${resultTitle}</p>
-          <p class="end-detail">${resultDetail}</p>
+          <p class="end-outcome ${outcomeClass}">${title}</p>
+          <p class="end-detail">${detail}</p>
         </div>
-        <p class="replay-unranked-note">Practice only — no score, leaderboard placement, streak, or history update.</p>
-        <div class="end-actions replay-end-actions">
-          ${replayCooldownActionHtml()}
-        </div>
+        <p class="replay-unranked-note">Practice only — no score, percentile, leaderboard placement, streak, history, or claim update.</p>
         <button type="button" class="back-to-today-btn" id="back-to-today-btn">← Back to today</button>
       </div>
     `;
 
-    const replayBtn = endPanel.querySelector<HTMLButtonElement>('#replay-btn');
-    const replayStatus = endPanel.querySelector<HTMLElement>('#replay-status');
-    const replayCooldown = endPanel.querySelector<HTMLElement>('#replay-cooldown');
-    if (replayBtn && replayStatus && replayCooldown) {
-      startReplayCooldown(replayBtn, replayStatus, replayCooldown, replayAvailableAtMs);
-      replayBtn.addEventListener('click', () => {
-        void startReplay(root, ctx.identity);
-      });
-    }
     const backToTodayBtn = endPanel.querySelector<HTMLButtonElement>('#back-to-today-btn');
     if (backToTodayBtn) {
       backToTodayBtn.addEventListener('click', () => {
@@ -722,7 +990,38 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     }
   };
 
-  const endGame = (turn: CharacterTurn, completedAtMs = Date.now()): void => {
+  const renderReplayEndCard = (turn: CharacterTurn): void => {
+    const outcome: 'deal' | 'no_deal' = turn.outcome === 'deal' ? 'deal' : 'no_deal';
+    renderReplayTerminalCard(
+      outcome === 'deal' ? '🤝 Replay complete' : '💥 Replay complete',
+      outcome === 'deal'
+        ? `Closed in ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}.`
+        : `No deal after ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}.`,
+      outcome === 'deal' ? 'deal' : 'no-deal',
+    );
+  };
+
+  const renderReplayExpiredCard = (): void => {
+    renderReplayTerminalCard('⌛ Replay time ended', 'Your three-minute practice replay has expired.', 'timeout');
+  };
+
+  if (ctx.replay && replayTimerValue && replayTimerStatus && replayPauseButton && replayResumeButton) {
+    replayTimer = new ReplayTimerController(
+      ctx.replay.sessionToken,
+      {
+        value: replayTimerValue,
+        status: replayTimerStatus,
+        pauseButton: replayPauseButton,
+        resumeButton: replayResumeButton,
+      },
+      ctx.replay.timer,
+      updateInputState,
+      renderReplayExpiredCard,
+    );
+    updateInputState();
+  }
+
+  const endGame = (turn: CharacterTurn): void => {
     if (ctx.replay) {
       renderReplayEndCard(turn);
       return;
@@ -734,10 +1033,6 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     if (acceptBtn) acceptBtn.disabled = true;
 
     const outcome: 'deal' | 'no_deal' = turn.outcome === 'deal' ? 'deal' : 'no_deal';
-    // The newly completed daily game has not been reloaded yet, so begin its
-    // visible cooldown locally. A future session/start response supplies the
-    // server-authoritative availability time instead.
-    const replayAvailableAtMs = completedAtMs + REPLAY_COOLDOWN_MS;
     const { score, label } = ctx.scoreTurn(turn);
 
     const scoreSaved = ctx.recordScore(score, label, turn);
@@ -765,7 +1060,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         ${ctx.archive ? '' : '<div class="claim-box" id="claim-box"></div>'}
         <div class="end-actions">
           <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
-          ${ctx.archive ? '' : replayCooldownActionHtml()}
+          ${ctx.archive ? '' : replayStartActionHtml()}
           <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">🏆 Best negotiators</button>
           <button class="leaderboard-btn archive-btn" id="archive-btn-end" type="button">🗓️ Past negotiations</button>
         </div>
@@ -804,10 +1099,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     if (countdownEl) startCountdown(countdownEl);
 
     const replayBtn = endPanel.querySelector<HTMLButtonElement>('#replay-btn');
-    const replayStatus = endPanel.querySelector<HTMLElement>('#replay-status');
-    const replayCooldown = endPanel.querySelector<HTMLElement>('#replay-cooldown');
-    if (replayBtn && replayStatus && replayCooldown) {
-      startReplayCooldown(replayBtn, replayStatus, replayCooldown, replayAvailableAtMs);
+    if (replayBtn) {
       replayBtn.addEventListener('click', () => {
         void startReplay(root, ctx.identity);
       });
@@ -891,12 +1183,9 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         applyState(turn);
 
         if (turn.done) {
-          // The cooldown starts when the daily negotiation completes, not when
-          // its closing message finishes animating into the result card.
-          const completedAtMs = Date.now();
           window.setTimeout(() => {
             if (gameEnded) return;
-            endGame(turn, completedAtMs);
+            endGame(turn);
             chatLog.scrollTop = chatLog.scrollHeight;
           }, 1600);
         } else {
@@ -913,6 +1202,14 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         awaitingTurn = false;
         if (err instanceof MessageTooLongError) {
           addBubble(chatLog, 'system', `Keep it under ${err.maxMessageChars} characters — house rules.`);
+        } else if (err instanceof ReplayTurnError) {
+          if (err.code === 'replay_expired') {
+            renderReplayExpiredCard();
+            return;
+          }
+          if (err.timer) replayTimer?.applyServerTimer(err.timer);
+          else replayTimer?.freezeFromPausedResponse();
+          addBubble(chatLog, 'system', 'Replay paused — resume the timer to keep negotiating.');
         } else {
           addBubble(chatLog, 'system', 'The line went quiet — try sending that again.');
         }
@@ -948,7 +1245,7 @@ function loadLlmGame(
   session: SessionStartLlm,
   dayNumber: number,
   archive = false,
-  replay = false,
+  replay?: ReplayGameConfig,
 ): void {
   // Neither kind of unranked play may touch the daily streak.
   const streak = archive || replay ? getStoredStreak() : updateStreak(dayNumber);
@@ -960,7 +1257,9 @@ function loadLlmGame(
     currentAsk: scenario.current_ask ?? 0,
     turns: 0,
   };
-  const engine = createLlmEngine(session.session_token, startState);
+  const engine = replay
+    ? createReplayLlmEngine(session.session_token, startState)
+    : createLlmEngine(session.session_token, startState);
   const initialTurn = engine.start();
 
   renderGame(root, {
@@ -1007,7 +1306,10 @@ async function startReplay(root: HTMLElement, identity: DeviceIdentity): Promise
     session_token: result.session.session_token,
     scenario: result.session.scenario,
   };
-  loadLlmGame(root, session, getDayNumber(), false, true);
+  loadLlmGame(root, session, getDayNumber(), false, {
+    sessionToken: result.session.session_token,
+    timer: result.timer,
+  });
 }
 
 /**
@@ -1037,7 +1339,6 @@ async function playArchivedDay(root: HTMLElement, identity: DeviceIdentity, day:
 function renderAlreadyPlayed(
   root: HTMLElement,
   result: SessionStartAlreadyPlayed['result'],
-  replayAvailableAtMs: number,
   dayNumber: number,
   identity: DeviceIdentity,
 ): void {
@@ -1045,12 +1346,6 @@ function renderAlreadyPlayed(
   const outcome: 'deal' | 'no_deal' = result.outcome === 'deal' ? 'deal' : 'no_deal';
   const effectiveDay = result.day_number || dayNumber;
   const streak = result.streak && result.streak > 0 ? result.streak : getStoredStreak();
-  // The session/start payload is authoritative after a reload. Keep a
-  // conservative local fallback only for an older or malformed response.
-  const resolvedReplayAvailableAtMs = Number.isFinite(replayAvailableAtMs)
-    ? replayAvailableAtMs
-    : Date.now() + REPLAY_COOLDOWN_MS;
-
   root.innerHTML = `
     <div class="game">
       <header class="game-header">
@@ -1092,7 +1387,7 @@ function renderAlreadyPlayed(
           <div class="claim-box" id="claim-box"></div>
           <div class="end-actions">
             <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
-            ${replayCooldownActionHtml()}
+            ${replayStartActionHtml()}
             <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">🏆 Best negotiators</button>
             <button class="leaderboard-btn archive-btn" id="archive-btn-end" type="button">🗓️ Past negotiations</button>
           </div>
@@ -1129,10 +1424,7 @@ function renderAlreadyPlayed(
   if (countdownEl) startCountdown(countdownEl);
 
   const replayBtn = root.querySelector<HTMLButtonElement>('#replay-btn');
-  const replayStatus = root.querySelector<HTMLElement>('#replay-status');
-  const replayCooldown = root.querySelector<HTMLElement>('#replay-cooldown');
-  if (replayBtn && replayStatus && replayCooldown) {
-    startReplayCooldown(replayBtn, replayStatus, replayCooldown, resolvedReplayAvailableAtMs);
+  if (replayBtn) {
     replayBtn.addEventListener('click', () => {
       void startReplay(root, identity);
     });
@@ -1204,7 +1496,7 @@ async function main(): Promise<void> {
   const session = await startBackendSession(identity);
   if (session && session.llm === true) {
     if ('already_played' in session && session.already_played) {
-      renderAlreadyPlayed(root, session.result, session.replay_available_at_ms, dayNumber, identity);
+      renderAlreadyPlayed(root, session.result, dayNumber, identity);
       return;
     }
     loadLlmGame(root, session, dayNumber);

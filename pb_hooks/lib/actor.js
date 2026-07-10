@@ -26,9 +26,8 @@ Expected scenario_secrets.secret_spec shape:
 // server-side and surfaced to the player as a house rule (keeps per-session
 // LLM cost bounded).
 var MAX_MESSAGE_CHARS = 280;
-// Replays are unranked and have no in-session deadline. This delay applies
-// between a completed ranked game/replay and the next replay start.
-var REPLAY_COOLDOWN_MS = 180000;
+// Replays run on a server-enforced three-minute active-time clock.
+var REPLAY_DURATION_MS = 180000;
 
 function todayUTC() {
   return new Date().toISOString().slice(0, 10);
@@ -198,9 +197,18 @@ function newSessionRecord(app, scenario, spec, identity) {
     state.archive_day = intOrDefault(identity.archive_day, 0);
   }
   if (identity.replay) {
-    // Replay sessions are marked solely so the ordinary turn pipeline keeps
-    // them unranked. They have no timer or pause state.
+    // The replay clock is server-owned. `replay_elapsed_ms` is persisted at
+    // every replay boundary and `replay_active_since_ms` accounts for the
+    // currently-running active segment. The deadline is only meaningful while
+    // active; pause/resume replaces it without charging paused wall time.
+    var replayNowMs = Date.now();
     state.replay = true;
+    state.replay_duration_ms = REPLAY_DURATION_MS;
+    state.replay_elapsed_ms = 0;
+    state.replay_active_since_ms = replayNowMs;
+    state.replay_deadline_ms = replayNowMs + REPLAY_DURATION_MS;
+    state.replay_paused = false;
+    state.replay_pause_started_at_ms = null;
   }
 
   record.set("scenario", scenario.id);
@@ -837,46 +845,93 @@ function isReplayState(state) {
   return !!(state && state.replay);
 }
 
-function recordTimestampMs(record, fieldName) {
-  if (!record) {
-    return 0;
+function replayIntegerMs(value, fallback) {
+  var n = Number(value);
+  if (isNaN(n) || !isFinite(n) || n < 0) {
+    return fallback;
   }
-
-  var value = null;
-  try {
-    value = record.getString(fieldName);
-  } catch (stringErr) {}
-  if (!value) {
-    try {
-      value = record.get(fieldName);
-    } catch (valueErr) {}
-  }
-  if (value && typeof value.getTime === "function") {
-    var dateMs = value.getTime();
-    return isNaN(dateMs) ? 0 : dateMs;
-  }
-
-  var text = String(value || "").trim();
-  if (!text) {
-    return 0;
-  }
-  // PocketBase autodate values are UTC. Add the UTC designator to the
-  // database's space-separated form before parsing in JavaScript.
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)) {
-    text = text.replace(" ", "T") + "Z";
-  }
-  var ms = Date.parse(text);
-  return isNaN(ms) ? 0 : ms;
+  return Math.floor(n);
 }
 
-function replayAvailabilityFromDailyScore(scoreRecord, nowMs) {
-  var createdAtMs = recordTimestampMs(scoreRecord, "created");
-  if (createdAtMs > 0) {
-    return createdAtMs + REPLAY_COOLDOWN_MS;
+function replayDurationMs(state) {
+  var duration = replayIntegerMs(state && state.replay_duration_ms, REPLAY_DURATION_MS);
+  return duration > 0 ? duration : REPLAY_DURATION_MS;
+}
+
+// Calculates elapsed *active* time from durable replay state. A pause never
+// contributes wall-clock time because only an active_since timestamp accrues.
+function replayTimingFromState(state, nowMs) {
+  state = state || {};
+  var now = replayIntegerMs(nowMs, Date.now());
+  var duration = replayDurationMs(state);
+  var elapsed = replayIntegerMs(state.replay_elapsed_ms, 0);
+  if (elapsed > duration) {
+    elapsed = duration;
   }
-  // Scores created before the timestamp migration have no reliable creation
-  // time. They are already qualifying daily scores, so do not lock them out.
-  return Math.max(0, Number(nowMs) || Date.now());
+  var paused = !!state.replay_paused;
+  var activeSince = replayIntegerMs(state.replay_active_since_ms, 0);
+
+  if (!paused) {
+    if (activeSince > 0 && activeSince <= now) {
+      elapsed = Math.min(duration, elapsed + (now - activeSince));
+    } else {
+      // A deadline lets a session written by an earlier server process retain
+      // its active-time progress even if active_since was absent or malformed.
+      var priorDeadline = replayIntegerMs(state.replay_deadline_ms, 0);
+      if (priorDeadline > 0) {
+        elapsed = Math.max(elapsed, duration - Math.max(0, priorDeadline - now));
+        elapsed = Math.min(duration, elapsed);
+      }
+    }
+  }
+
+  var remaining = Math.max(0, duration - elapsed);
+  return {
+    duration_ms: duration,
+    elapsed_ms: elapsed,
+    remaining_ms: remaining,
+    paused: paused,
+    active_since_ms: paused ? null : now,
+    deadline_ms: paused ? null : now + remaining,
+    pause_started_at_ms: paused ? replayIntegerMs(state.replay_pause_started_at_ms, now) : null,
+  };
+}
+
+function replayClockPayload(timing, nowMs) {
+  timing = timing || {};
+  var remainingMs = replayIntegerMs(timing.remaining_ms, 0);
+  var paused = !!timing.paused;
+  return {
+    duration_ms: replayIntegerMs(timing.duration_ms, REPLAY_DURATION_MS),
+    elapsed_ms: replayIntegerMs(timing.elapsed_ms, 0),
+    remaining_ms: remainingMs,
+    deadline_ms: timing.deadline_ms === null ? null : replayIntegerMs(timing.deadline_ms, 0),
+    paused: paused,
+    status: remainingMs <= 0 ? "expired" : (paused ? "paused" : "active"),
+    server_now_ms: replayIntegerMs(nowMs, Date.now()),
+  };
+}
+
+function applyReplayTimingToState(state, timing) {
+  state = state || {};
+  timing = timing || replayTimingFromState(state, Date.now());
+  state.replay = true;
+  state.replay_duration_ms = replayIntegerMs(timing.duration_ms, REPLAY_DURATION_MS);
+  state.replay_elapsed_ms = replayIntegerMs(timing.elapsed_ms, 0);
+  state.replay_paused = !!timing.paused;
+  state.replay_active_since_ms = timing.paused ? null : replayIntegerMs(timing.active_since_ms, Date.now());
+  state.replay_deadline_ms = timing.paused ? null : replayIntegerMs(timing.deadline_ms, Date.now());
+  state.replay_pause_started_at_ms = timing.paused
+    ? replayIntegerMs(timing.pause_started_at_ms, Date.now())
+    : null;
+  return state;
+}
+
+function hasReplayTimingState(state) {
+  return isReplayState(state) &&
+    typeof state.replay_duration_ms !== "undefined" &&
+    typeof state.replay_elapsed_ms !== "undefined" &&
+    typeof state.replay_paused !== "undefined";
 }
 
 function findReplayMetricsRecord(app, sessionToken) {
@@ -885,52 +940,6 @@ function findReplayMetricsRecord(app, sessionToken) {
   } catch (err) {
     return null;
   }
-}
-
-function findLatestCompletedReplayMetricsForDevice(app, deviceId) {
-  deviceId = String(deviceId || "").trim();
-  if (!deviceId || deviceId.length > 64) {
-    return null;
-  }
-
-  try {
-    var records = app.findRecordsByFilter(
-      "replay_metrics",
-      "device_id = {:device} && day_number = {:day} && status = {:status}",
-      "-updated",
-      1,
-      0,
-      { device: deviceId, day: currentDayNumber(), status: "completed" }
-    );
-    return records && records.length ? records[0] : null;
-  } catch (err) {
-    return null;
-  }
-}
-
-// The next replay opens after the later of today's ranked score creation and
-// the most recently completed replay. `updated` is written when completion is
-// durably recorded, so it is the authoritative replay-completion timestamp.
-function replayAvailableAtMs(app, dailyScore, deviceId, nowMs) {
-  if (!dailyScore) {
-    return null;
-  }
-
-  var now = Math.max(0, Number(nowMs) || Date.now());
-  var availableAtMs = replayAvailabilityFromDailyScore(dailyScore, now);
-  var latestReplay = findLatestCompletedReplayMetricsForDevice(app, deviceId);
-  if (!latestReplay) {
-    return availableAtMs;
-  }
-
-  var replayCompletedAtMs = recordTimestampMs(latestReplay, "updated");
-  if (replayCompletedAtMs > 0) {
-    availableAtMs = Math.max(availableAtMs, replayCompletedAtMs + REPLAY_COOLDOWN_MS);
-  } else {
-    // A corrupt completion timestamp must not bypass the server cooldown.
-    availableAtMs = Math.max(availableAtMs, now + REPLAY_COOLDOWN_MS);
-  }
-  return availableAtMs;
 }
 
 function newReplaySessionRecord(app, scenario, spec, identity) {
@@ -947,18 +956,302 @@ function newReplaySessionRecord(app, scenario, spec, identity) {
     metrics.set("day_number", currentDayNumber());
     metrics.set("scenario", scenario.id);
     metrics.set("status", "active");
+    metrics.set("pause_count", 0);
+    metrics.set("pause_total_ms", 0);
+    metrics.set("pause_events", "[]");
+    metrics.set("elapsed_ms", 0);
     txApp.save(metrics);
   });
 
   return created;
 }
 
-// The legacy turn handler reconstructs state on every turn. Preserve only the
-// replay marker so its completion continues through unranked score suppression;
-// there is deliberately no replay clock or pause state to preserve.
+function replayPauseEvents(metrics) {
+  var events = getJSONField(metrics, "pause_events", []);
+  return Array.isArray(events) ? events : [];
+}
+
+function ensureReplayMetricsRecord(app, sessionRecord, state) {
+  var token = sessionRecord.getString("token");
+  var metrics = findReplayMetricsRecord(app, token);
+  if (metrics) {
+    return metrics;
+  }
+
+  var collection = app.findCollectionByNameOrId("replay_metrics");
+  metrics = new Record(collection);
+  metrics.set("session_token", token);
+  metrics.set("device_id", String((state && state.device_id) || "").slice(0, 64));
+  metrics.set("day_number", currentDayNumber());
+  metrics.set("scenario", sessionRecord.getString("scenario"));
+  metrics.set("status", (state && state.replay_paused) ? "paused" : "active");
+  metrics.set("pause_count", 0);
+  metrics.set("pause_total_ms", 0);
+  metrics.set("pause_events", "[]");
+  metrics.set("elapsed_ms", replayIntegerMs(state && state.replay_elapsed_ms, 0));
+  app.save(metrics);
+  return metrics;
+}
+
+function expireReplaySession(app, sessionRecord, metrics, state, timing, nowMs) {
+  timing = timing || replayTimingFromState(state, nowMs);
+  timing.elapsed_ms = timing.duration_ms;
+  timing.remaining_ms = 0;
+  timing.paused = false;
+  timing.active_since_ms = null;
+  timing.deadline_ms = replayIntegerMs(nowMs, Date.now());
+  timing.pause_started_at_ms = null;
+  applyReplayTimingToState(state, timing);
+  state.replay_expired_at_ms = replayIntegerMs(nowMs, Date.now());
+  sessionRecord.set("state", JSON.stringify(state));
+  sessionRecord.set("status", "expired");
+  app.save(sessionRecord);
+
+  if (metrics) {
+    metrics.set("status", "expired");
+    metrics.set("elapsed_ms", timing.duration_ms);
+    app.save(metrics);
+  }
+  return replayClockPayload(timing, nowMs);
+}
+
+function checkpointReplayMetrics(app, metrics, timing, status) {
+  if (!metrics) {
+    return;
+  }
+  metrics.set("elapsed_ms", replayIntegerMs(timing.elapsed_ms, 0));
+  if (status) {
+    metrics.set("status", status);
+  }
+  app.save(metrics);
+}
+
+// Checkpointing at the start (and immediately before the mutation) of every
+// turn prevents a browser clock from extending the session. All elapsed values
+// are calculated from server timestamps and committed with the session state.
+function guardReplayTurn(app, sessionToken) {
+  var result = { replay: false };
+  var now = Date.now();
+  app.runInTransaction(function(txApp) {
+    var session;
+    try {
+      session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+    } catch (notFoundErr) {
+      return;
+    }
+    var state = getJSONField(session, "state", {});
+    if (!isReplayState(state)) {
+      return;
+    }
+
+    var metrics = ensureReplayMetricsRecord(txApp, session, state);
+    var timing = replayTimingFromState(state, now);
+    var sessionStatus = session.getString("status");
+    var metricsStatus = metrics.getString("status");
+    if (sessionStatus === "expired" || metricsStatus === "expired") {
+      result.replay = true;
+      result.expired = true;
+      result.clock = expireReplaySession(txApp, session, metrics, state, timing, now);
+      return;
+    }
+    if (sessionStatus !== "active" || metricsStatus === "completed") {
+      result.replay = true;
+      result.inactive = true;
+      result.clock = replayClockPayload(timing, now);
+      return;
+    }
+    if (timing.paused) {
+      // Repair a partially written pause transaction before reporting it.
+      checkpointReplayMetrics(txApp, metrics, timing, "paused");
+      result.replay = true;
+      result.paused = true;
+      result.clock = replayClockPayload(timing, now);
+      return;
+    }
+    if (timing.remaining_ms <= 0) {
+      result.replay = true;
+      result.expired = true;
+      result.clock = expireReplaySession(txApp, session, metrics, state, timing, now);
+      return;
+    }
+
+    applyReplayTimingToState(state, timing);
+    session.set("state", JSON.stringify(state));
+    txApp.save(session);
+    checkpointReplayMetrics(txApp, metrics, timing, "active");
+    result.replay = true;
+    result.clock = replayClockPayload(timing, now);
+  });
+  return result;
+}
+
+function pauseReplay(app, sessionToken) {
+  var result = { replay: false };
+  var now = Date.now();
+  app.runInTransaction(function(txApp) {
+    var session;
+    try {
+      session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+    } catch (notFoundErr) {
+      result.not_found = true;
+      return;
+    }
+    var state = getJSONField(session, "state", {});
+    if (!isReplayState(state)) {
+      result.not_replay = true;
+      return;
+    }
+
+    var metrics = ensureReplayMetricsRecord(txApp, session, state);
+    var timing = replayTimingFromState(state, now);
+    if (session.getString("status") === "expired" || metrics.getString("status") === "expired") {
+      result.replay = true;
+      result.expired = true;
+      result.clock = expireReplaySession(txApp, session, metrics, state, timing, now);
+      return;
+    }
+    if (session.getString("status") !== "active" || metrics.getString("status") === "completed") {
+      result.replay = true;
+      result.inactive = true;
+      result.clock = replayClockPayload(timing, now);
+      return;
+    }
+    if (timing.paused) {
+      checkpointReplayMetrics(txApp, metrics, timing, "paused");
+      result.replay = true;
+      result.paused = true;
+      result.clock = replayClockPayload(timing, now);
+      return;
+    }
+    if (timing.remaining_ms <= 0) {
+      result.replay = true;
+      result.expired = true;
+      result.clock = expireReplaySession(txApp, session, metrics, state, timing, now);
+      return;
+    }
+
+    var events = replayPauseEvents(metrics);
+    events.push({
+      paused_at_ms: now,
+      resumed_at_ms: null,
+      duration_ms: null,
+      active_elapsed_ms: timing.elapsed_ms,
+    });
+    timing.paused = true;
+    timing.active_since_ms = null;
+    timing.deadline_ms = null;
+    timing.pause_started_at_ms = now;
+    applyReplayTimingToState(state, timing);
+    session.set("state", JSON.stringify(state));
+    txApp.save(session);
+
+    metrics.set("status", "paused");
+    metrics.set("elapsed_ms", timing.elapsed_ms);
+    metrics.set("pause_count", Math.max(metrics.getInt("pause_count"), events.length));
+    metrics.set("pause_events", JSON.stringify(events));
+    txApp.save(metrics);
+    result.replay = true;
+    result.paused = true;
+    result.clock = replayClockPayload(timing, now);
+  });
+  return result;
+}
+
+function resumeReplay(app, sessionToken) {
+  var result = { replay: false };
+  var now = Date.now();
+  app.runInTransaction(function(txApp) {
+    var session;
+    try {
+      session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+    } catch (notFoundErr) {
+      result.not_found = true;
+      return;
+    }
+    var state = getJSONField(session, "state", {});
+    if (!isReplayState(state)) {
+      result.not_replay = true;
+      return;
+    }
+
+    var metrics = ensureReplayMetricsRecord(txApp, session, state);
+    var timing = replayTimingFromState(state, now);
+    if (session.getString("status") === "expired" || metrics.getString("status") === "expired") {
+      result.replay = true;
+      result.expired = true;
+      result.clock = expireReplaySession(txApp, session, metrics, state, timing, now);
+      return;
+    }
+    if (session.getString("status") !== "active" || metrics.getString("status") === "completed") {
+      result.replay = true;
+      result.inactive = true;
+      result.clock = replayClockPayload(timing, now);
+      return;
+    }
+    if (!timing.paused) {
+      applyReplayTimingToState(state, timing);
+      session.set("state", JSON.stringify(state));
+      txApp.save(session);
+      checkpointReplayMetrics(txApp, metrics, timing, "active");
+      result.replay = true;
+      result.paused = false;
+      result.clock = replayClockPayload(timing, now);
+      return;
+    }
+    if (timing.remaining_ms <= 0) {
+      result.replay = true;
+      result.expired = true;
+      result.clock = expireReplaySession(txApp, session, metrics, state, timing, now);
+      return;
+    }
+
+    var pausedAtMs = replayIntegerMs(state.replay_pause_started_at_ms, now);
+    var pauseDurationMs = Math.max(0, now - pausedAtMs);
+    var events = replayPauseEvents(metrics);
+    var event = null;
+    for (var i = events.length - 1; i >= 0; i--) {
+      if (events[i] && (events[i].resumed_at_ms === null || typeof events[i].resumed_at_ms === "undefined")) {
+        event = events[i];
+        break;
+      }
+    }
+    if (!event) {
+      event = {
+        paused_at_ms: pausedAtMs,
+        active_elapsed_ms: timing.elapsed_ms,
+      };
+      events.push(event);
+      metrics.set("pause_count", Math.max(metrics.getInt("pause_count"), events.length));
+    }
+    event.resumed_at_ms = now;
+    event.duration_ms = pauseDurationMs;
+
+    timing.paused = false;
+    timing.active_since_ms = now;
+    timing.deadline_ms = now + timing.remaining_ms;
+    timing.pause_started_at_ms = null;
+    applyReplayTimingToState(state, timing);
+    session.set("state", JSON.stringify(state));
+    txApp.save(session);
+
+    metrics.set("status", "active");
+    metrics.set("elapsed_ms", timing.elapsed_ms);
+    metrics.set("pause_total_ms", Math.max(0, metrics.getInt("pause_total_ms")) + pauseDurationMs);
+    metrics.set("pause_events", JSON.stringify(events));
+    txApp.save(metrics);
+    result.replay = true;
+    result.paused = false;
+    result.clock = replayClockPayload(timing, now);
+  });
+  return result;
+}
+
+// actor.pb.js rebuilds the normal turn-state object. Copy all server-owned
+// replay timing fields back into that replacement so a turn cannot discard its
+// deadline, elapsed active time, or pause state.
 function preserveReplayStateOnSessionUpdate(app, sessionRecord) {
   var nextState = getJSONField(sessionRecord, "state", {});
-  if (isReplayState(nextState)) {
+  if (hasReplayTimingState(nextState)) {
     return false;
   }
 
@@ -972,39 +1265,61 @@ function preserveReplayStateOnSessionUpdate(app, sessionRecord) {
     return false;
   }
 
-  nextState.replay = true;
-  sessionRecord.set("state", JSON.stringify(nextState));
-  return true;
-}
+  var now = Date.now();
+  var timing = replayTimingFromState(originalState, now);
+  if (!timing.paused && timing.remaining_ms <= 0) {
+    timing.elapsed_ms = timing.duration_ms;
+    timing.remaining_ms = 0;
+    timing.active_since_ms = null;
+    timing.deadline_ms = now;
+    timing.paused = false;
+    applyReplayTimingToState(nextState, timing);
+    nextState.replay_expired_at_ms = now;
+    sessionRecord.set("state", JSON.stringify(nextState));
+    sessionRecord.set("status", "expired");
+    try {
+      var expiredMetrics = ensureReplayMetricsRecord(app, sessionRecord, nextState);
+      expiredMetrics.set("status", "expired");
+      expiredMetrics.set("elapsed_ms", timing.duration_ms);
+      app.save(expiredMetrics);
+    } catch (metricsErr) {
+      console.log("replay_metrics_expire_failed: " + metricsErr.message);
+    }
+    return true;
+  }
 
-// This guard retains the terminal response for historical expired records, but
-// it never applies a deadline or pause state to a current replay session.
-function guardReplayTurn(app, sessionToken) {
-  var session;
+  applyReplayTimingToState(nextState, timing);
+  sessionRecord.set("state", JSON.stringify(nextState));
   try {
-    session = app.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
-  } catch (err) {
-    return { replay: false };
+    var metrics = ensureReplayMetricsRecord(app, sessionRecord, nextState);
+    if (metrics.getString("status") === "active") {
+      checkpointReplayMetrics(app, metrics, timing, "active");
+    }
+  } catch (metricsErr) {
+    console.log("replay_metrics_checkpoint_failed: " + metricsErr.message);
   }
-  var state = getJSONField(session, "state", {});
-  if (!isReplayState(state)) {
-    return { replay: false };
-  }
-  if (session.getString("status") === "expired") {
-    return { replay: true, expired: true };
-  }
-  if (session.getString("status") !== "active") {
-    return { replay: true, inactive: true };
-  }
-  return { replay: true };
+  return true;
 }
 
 function completeReplayMetricsBestEffort(app, sessionToken) {
   try {
     var completed = false;
     app.runInTransaction(function(txApp) {
-      var metrics = findReplayMetricsRecord(txApp, sessionToken);
-      if (!metrics) {
+      var session;
+      try {
+        session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+      } catch (notFoundErr) {
+        return;
+      }
+      var state = getJSONField(session, "state", {});
+      if (!isReplayState(state)) {
+        return;
+      }
+      var metrics = ensureReplayMetricsRecord(txApp, session, state);
+      var now = Date.now();
+      var timing = replayTimingFromState(state, now);
+      if (session.getString("status") === "expired" || metrics.getString("status") === "expired" || (!timing.paused && timing.remaining_ms <= 0)) {
+        expireReplaySession(txApp, session, metrics, state, timing, now);
         return;
       }
       if (metrics.getString("status") === "completed") {
@@ -1012,8 +1327,15 @@ function completeReplayMetricsBestEffort(app, sessionToken) {
         return;
       }
 
-      // Saving this terminal status advances replay_metrics.updated. That
-      // timestamp is used to enforce the cooldown before another replay.
+      // Completion is a final active-time checkpoint. It deliberately does not
+      // create a score: replay calls reach this function only via the replay
+      // branch in saveServerScoreBestEffort below.
+      state.replay_elapsed_ms = timing.elapsed_ms;
+      state.replay_active_since_ms = null;
+      state.replay_deadline_ms = timing.deadline_ms;
+      session.set("state", JSON.stringify(state));
+      txApp.save(session);
+      metrics.set("elapsed_ms", timing.elapsed_ms);
       metrics.set("status", "completed");
       txApp.save(metrics);
       completed = true;
@@ -1135,7 +1457,7 @@ function runNotaryBestEffort(sessionRecord, transcript) {
 
 module.exports = {
   MAX_MESSAGE_CHARS: MAX_MESSAGE_CHARS,
-  REPLAY_COOLDOWN_MS: REPLAY_COOLDOWN_MS,
+  REPLAY_DURATION_MS: REPLAY_DURATION_MS,
   findTodaysScenario: findTodaysScenario,
   findSecretForScenario: findSecretForScenario,
   playerStatedPrice: playerStatedPrice,
@@ -1161,10 +1483,11 @@ module.exports = {
   findArchiveScenario: findArchiveScenario,
   findTodaysScoreForDevice: findTodaysScoreForDevice,
   computeStreakForDevice: computeStreakForDevice,
-  recordTimestampMs: recordTimestampMs,
-  replayAvailabilityFromDailyScore: replayAvailabilityFromDailyScore,
-  findLatestCompletedReplayMetricsForDevice: findLatestCompletedReplayMetricsForDevice,
-  replayAvailableAtMs: replayAvailableAtMs,
+  replayTimingFromState: replayTimingFromState,
+  replayClockPayload: replayClockPayload,
+  applyReplayTimingToState: applyReplayTimingToState,
+  pauseReplay: pauseReplay,
+  resumeReplay: resumeReplay,
   saveServerScoreBestEffort: saveServerScoreBestEffort,
   guardReplayTurn: guardReplayTurn,
   preserveReplayStateOnSessionUpdate: preserveReplayStateOnSessionUpdate,

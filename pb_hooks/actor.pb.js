@@ -154,6 +154,7 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   // in-character reply given the final price — so text and price can never
   // disagree and no reply rewriting is needed.
   var actor;
+  var replayClock = null;
   try {
     actor = actorLib.cleanDecision(actorLib.chatJSON(
       actorLib.buildDeciderMessages(scenario, spec, state, transcript, playerMessage),
@@ -181,6 +182,21 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     );
     actor.reply = String((spoken && spoken.reply) || "").trim() || "...";
   } catch (err) {
+    // The middleware checkpoints the replay at request entry. Check again
+    // before a fallback response so an LLM outage cannot return a turn after
+    // the server-owned replay clock has expired.
+    try {
+      var failedReplayGuard = actorLib.guardReplayTurn(e.app, token);
+      if (failedReplayGuard && failedReplayGuard.expired) {
+        return e.json(410, { error: "replay_expired", replay: failedReplayGuard.clock || null });
+      }
+      if (failedReplayGuard && failedReplayGuard.paused) {
+        return e.json(409, { error: "replay_paused", replay: failedReplayGuard.clock || null });
+      }
+    } catch (guardErr) {
+      console.log("replay_turn_guard_failed: " + guardErr.message);
+      return e.json(500, { error: "replay_guard_unavailable" });
+    }
     console.log("actor_unavailable: " + err.message);
     actorLib.logIncident(e.app, token, "actor_unavailable", { error: err.message, turn: currentTurns });
     return e.json(200, {
@@ -315,6 +331,34 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     state.pending_offer = pendingOffer;
   }
 
+  // Run the server-side timing guard immediately before writing the turn. The
+  // first guard is middleware at request entry; this second checkpoint covers
+  // model latency and makes expiry authoritative even for a long-running turn.
+  try {
+    var finalReplayGuard = actorLib.guardReplayTurn(e.app, token);
+    if (finalReplayGuard && finalReplayGuard.expired) {
+      return e.json(410, { error: "replay_expired", replay: finalReplayGuard.clock || null });
+    }
+    if (finalReplayGuard && finalReplayGuard.paused) {
+      return e.json(409, { error: "replay_paused", replay: finalReplayGuard.clock || null });
+    }
+    if (finalReplayGuard && finalReplayGuard.replay && finalReplayGuard.clock) {
+      replayClock = finalReplayGuard.clock;
+      actorLib.applyReplayTimingToState(state, {
+        duration_ms: replayClock.duration_ms,
+        elapsed_ms: replayClock.elapsed_ms,
+        remaining_ms: replayClock.remaining_ms,
+        paused: false,
+        active_since_ms: replayClock.server_now_ms,
+        deadline_ms: replayClock.deadline_ms,
+        pause_started_at_ms: null,
+      });
+    }
+  } catch (guardErr) {
+    console.log("replay_turn_guard_failed: " + guardErr.message);
+    return e.json(500, { error: "replay_guard_unavailable" });
+  }
+
   transcript.push({ role: "player", message: playerMessage });
   transcript.push({ role: "actor", message: actor.reply, action: action, offer: actor.offer, mood: actor.mood });
 
@@ -341,6 +385,10 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     done: done,
     state: actorLib.responseState(state),
   };
+  if (replayClock) {
+    replayClock.unranked = true;
+    response.replay = replayClock;
+  }
   if (done) {
     response.outcome = outcome;
     if (outcome === "deal" && dealPrice !== null) {
