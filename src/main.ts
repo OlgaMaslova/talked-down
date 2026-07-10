@@ -466,6 +466,17 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
   root.innerHTML = `
     <div class="game">
+      <nav class="desktop-topbar" aria-label="Game navigation">
+        <div class="desktop-brand">
+          <img class="brand-logo" src="${logoUrl}" width="32" height="32" alt="" />
+          <span class="brand-word">Talked Down</span>
+          <span class="desktop-day">Daily negotiation #${ctx.dayNumber}</span>
+        </div>
+        <div class="desktop-nav-actions">
+          <button type="button" class="desktop-nav-btn" id="leaderboard-btn-desktop">Best negotiators</button>
+          <button type="button" class="desktop-nav-btn" id="archive-btn-desktop">Past negotiations</button>
+        </div>
+      </nav>
       <header class="game-header">
         <div class="brand-row">
           <img class="brand-logo" src="${logoUrl}" width="32" height="32" alt="" />
@@ -484,13 +495,18 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
                 : ''
           }
         </div>
+        <span class="desktop-section-label">Scenario dossier</span>
         <h1 class="scenario-title">${escapeHtml(ctx.title)}</h1>
         <div class="character-line">
           <span class="char-name">${escapeHtml(ctx.characterName)}</span>
           <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
         </div>
-        ${ctx.playerBrief ? `<p class="player-brief">${escapeHtml(ctx.playerBrief)}</p>` : ''}
-        <p class="house-rules">📜 House rules: ${ctx.maxTurns} message${ctx.maxTurns === 1 ? '' : 's'} max, ${ctx.maxMessageChars} characters each.</p>
+        ${
+          ctx.playerBrief
+            ? `<div class="brief-block"><span class="brief-label">Your brief</span><p class="player-brief">${escapeHtml(ctx.playerBrief)}</p></div>`
+            : ''
+        }
+        <p class="house-rules">House rules: ${ctx.maxTurns} message${ctx.maxTurns === 1 ? '' : 's'} max, ${ctx.maxMessageChars} characters each.</p>
         <div class="header-buttons">
           <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
           <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">🗓️ Past negotiations</button>
@@ -502,8 +518,39 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
             <div class="ask-value" id="ask-value">${formatAsk(initialTurn.state.currentAsk, ctx.currency)}</div>
           </div></div>`
             : ''
-        }
+          }
       </header>
+      <aside class="negotiation-status" aria-label="Current negotiation status">
+        <div class="status-heading">
+          <span class="desktop-section-label">Current position</span>
+          <strong id="negotiation-state">In progress</strong>
+        </div>
+        <div class="status-primary">
+          <span>${ctx.showAsk ? 'Current ask' : 'Terms'}</span>
+          <strong id="ask-value-desktop">${
+            ctx.showAsk ? formatAsk(initialTurn.state.currentAsk, ctx.currency) : 'Open'
+          }</strong>
+        </div>
+        <dl class="status-facts">
+          <div>
+            <dt>Messages left</dt>
+            <dd id="turns-left-desktop">${Math.max(0, ctx.maxTurns - initialTurn.state.turns)}</dd>
+          </div>
+          <div>
+            <dt>Message limit</dt>
+            <dd>${ctx.maxMessageChars}</dd>
+          </div>
+          <div>
+            <dt>Mode</dt>
+            <dd>${ctx.replay ? 'Replay' : ctx.archive ? 'Archive' : 'Ranked'}</dd>
+          </div>
+        </dl>
+        <div class="status-identity">
+          <span>Negotiating as</span>
+          <strong>${escapeHtml(ctx.identity.handle)}</strong>
+        </div>
+        <p class="status-guidance">Make each message count. The other side reacts to your offer, reasoning, and tone.</p>
+      </aside>
       <div class="chat-log" id="chat-log"></div>
       <!-- Opener suggestion chips: docs/session-analysis-2026-07-09.md found 115/145
            sessions abandoned with a median of 0 player messages (blank-page
@@ -512,16 +559,16 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
            first message. -->
       <div class="opener-chips" id="opener-chips" role="group" aria-label="Suggested openers">
         <span class="opener-chips-label">Not sure how to start?</span>
-        <button type="button" class="opener-chip" data-opener="This is beautiful work — you clearly know your craft. What's your best price for me?">😊 Open with a compliment</button>
-        <button type="button" class="opener-chip" data-opener="That price seems high for what this is. Walk me through why it's worth that much?">🧠 Question the price</button>
-        <button type="button" class="opener-chip" data-opener="I'm interested, but my budget is tight. Could you do a better deal?">💰 Make a modest offer</button>
+        <button type="button" class="opener-chip" data-opener="This is beautiful work — you clearly know your craft. What's your best price for me?">Open with a compliment</button>
+        <button type="button" class="opener-chip" data-opener="That price seems high for what this is. Walk me through why it's worth that much?">Question the price</button>
+        <button type="button" class="opener-chip" data-opener="I'm interested, but my budget is tight. Could you do a better deal?">Make a modest offer</button>
       </div>
       <form class="input-row" id="input-row">
         <div class="input-field">
           <input id="chat-input" type="text" placeholder="Type your offer or say something…" autocomplete="off" maxlength="${ctx.maxMessageChars}" />
           <span class="char-counter" id="char-counter">0/${ctx.maxMessageChars}</span>
         </div>
-        <button type="button" id="accept-btn" title="Accept the current offer">🤝 Accept</button>
+        <button type="button" id="accept-btn" title="Accept the current offer">Accept offer</button>
         <button type="submit" id="send-btn" disabled>Send</button>
       </form>
       <div class="end-panel hidden" id="end-panel"></div>
@@ -536,17 +583,28 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const acceptBtn = root.querySelector<HTMLButtonElement>('#accept-btn');
   const charCounter = root.querySelector<HTMLElement>('#char-counter');
   const askValue = root.querySelector<HTMLElement>('#ask-value');
+  const askValueDesktop = root.querySelector<HTMLElement>('#ask-value-desktop');
+  const turnsLeftDesktop = root.querySelector<HTMLElement>('#turns-left-desktop');
+  const negotiationState = root.querySelector<HTMLElement>('#negotiation-state');
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
   const leaderboardBtnHeader = root.querySelector<HTMLButtonElement>('#leaderboard-btn-header');
   const archiveBtnHeader = root.querySelector<HTMLButtonElement>('#archive-btn-header');
+  const leaderboardBtnDesktop = root.querySelector<HTMLButtonElement>('#leaderboard-btn-desktop');
+  const archiveBtnDesktop = root.querySelector<HTMLButtonElement>('#archive-btn-desktop');
 
   if (!chatLog || !inputRow || !chatInput || !sendBtn || !charCounter || !endPanel) {
     return;
   }
 
   if (leaderboardBtnHeader) bindLeaderboardTrigger(leaderboardBtnHeader, ctx.dayNumber);
+  if (leaderboardBtnDesktop) bindLeaderboardTrigger(leaderboardBtnDesktop, ctx.dayNumber);
   if (archiveBtnHeader) {
     bindArchiveTrigger(archiveBtnHeader, getDayNumber(), (day) => {
+      void playArchivedDay(root, ctx.identity, day);
+    });
+  }
+  if (archiveBtnDesktop) {
+    bindArchiveTrigger(archiveBtnDesktop, getDayNumber(), (day) => {
       void playArchivedDay(root, ctx.identity, day);
     });
   }
@@ -644,6 +702,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const addBubble = (container: HTMLElement, sender: 'character' | 'user' | 'system', text: string): HTMLElement => {
     const bubble = document.createElement('div');
     bubble.className = `bubble ${sender}`;
+    bubble.dataset.speaker = sender === 'character' ? ctx.characterName : sender === 'user' ? 'You' : 'Notice';
     bubble.textContent = text;
     container.appendChild(bubble);
     container.scrollTop = container.scrollHeight;
@@ -653,6 +712,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const addTypingBubble = (container: HTMLElement): HTMLElement => {
     const bubble = document.createElement('div');
     bubble.className = 'bubble character typing';
+    bubble.dataset.speaker = ctx.characterName;
     bubble.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
     container.appendChild(bubble);
     container.scrollTop = container.scrollHeight;
@@ -666,6 +726,11 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const applyState = (turn: CharacterTurn): void => {
     lastKnownAsk = turn.state.currentAsk;
     if (askValue) askValue.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
+    if (askValueDesktop && ctx.showAsk) askValueDesktop.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
+    if (turnsLeftDesktop) turnsLeftDesktop.textContent = String(Math.max(0, ctx.maxTurns - turn.state.turns));
+    if (negotiationState) {
+      negotiationState.textContent = turn.done ? (turn.outcome === 'deal' ? 'Agreement reached' : 'Negotiation closed') : 'In progress';
+    }
   };
 
   const renderReplayEndCard = (turn: CharacterTurn): void => {

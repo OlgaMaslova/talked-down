@@ -64,6 +64,13 @@ body {
   font-size: 1.05rem;
 }
 
+.desktop-topbar,
+.negotiation-status,
+.desktop-section-label,
+.brief-label {
+  display: none;
+}
+
 /* ---------- Header ---------- */
 
 .game-header {
@@ -1251,150 +1258,644 @@ body {
   }
 }
 
-/* ---------- Desktop (>=1024px) ---------- */
+/* ---------- Desktop negotiation desk (>=1024px) ---------- */
 
 @media (min-width: 1024px) {
   body {
     min-height: 100dvh;
     display: flex;
     flex-direction: column;
+    background: #0c0e12;
   }
 
   #app {
-    align-items: center;
-    padding: 1.5rem 2rem 0;
-    min-height: 0;
     flex: 1;
+    min-height: 0;
+    align-items: center;
+    padding: clamp(1rem, 2vw, 2rem) clamp(1.25rem, 3vw, 3rem) 0;
   }
 
   .game {
-    max-width: 1080px;
-    min-height: 0;
-    height: min(82vh, 860px);
+    width: min(100%, 1320px);
+    max-width: 1320px;
+    min-height: 640px;
+    height: min(88vh, 900px);
     display: grid;
-    grid-template-columns: 360px 1fr;
-    grid-template-rows: 1fr auto auto;
-    border: 1px solid var(--border);
-    border-radius: 18px;
+    grid-template-columns: clamp(250px, 22vw, 300px) minmax(440px, 1fr) clamp(210px, 18vw, 250px);
+    grid-template-rows: 64px minmax(0, 1fr) auto auto;
+    background: #15181e;
+    border: 1px solid #2b3039;
+    border-radius: 12px;
     overflow: hidden;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+  }
+
+  .desktop-topbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+    padding: 0 1.35rem;
+    border-bottom: 1px solid #2b3039;
+    background: #111419;
+  }
+
+  .desktop-brand,
+  .desktop-nav-actions {
+    display: flex;
+    align-items: center;
+  }
+
+  .desktop-brand {
+    min-width: 0;
+    gap: 0.65rem;
+  }
+
+  .desktop-brand .brand-logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+  }
+
+  .desktop-brand .brand-word {
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+  }
+
+  .desktop-day {
+    margin-left: 0.35rem;
+    padding-left: 1rem;
+    border-left: 1px solid #303640;
+    color: #89919e;
+    font-size: 0.76rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .desktop-nav-actions {
+    gap: 0.25rem;
+  }
+
+  .desktop-nav-btn {
+    border: 0;
+    border-bottom: 1px solid transparent;
+    background: transparent;
+    color: #aab1bc;
+    padding: 0.6rem 0.75rem;
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .desktop-nav-btn:hover,
+  .desktop-nav-btn:focus-visible {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+    outline: none;
   }
 
   .game-header {
-    grid-row: 1 / 4;
     grid-column: 1;
+    grid-row: 2 / 5;
     position: static;
-    border-bottom: none;
-    border-right: 1px solid var(--border);
-    padding: 2rem 1.75rem;
+    max-height: none;
+    padding: 1.75rem 1.5rem;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0;
     overflow-y: auto;
-    max-height: none;
+    border-right: 1px solid #2b3039;
+    border-bottom: 0;
+    background: #12151a;
   }
 
-  .brand-row {
-    margin-bottom: 0.9rem;
+  .game-header .brand-row,
+  .game-header .header-buttons,
+  .game-header .meters,
+  .game-header .house-rules {
+    display: none;
   }
 
-  .brand-word {
-    font-size: 1.1rem;
+  .desktop-section-label,
+  .brief-label {
+    display: block;
+    color: #737c8a;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
   }
 
-  .brand-tagline {
-    font-size: 0.8rem;
+  .game-header > .desktop-section-label {
+    margin-bottom: 0.8rem;
   }
 
-  .scenario-title {
-    font-size: 1.7rem;
-    line-height: 1.2;
-    margin-bottom: 0.5rem;
-  }
-
-  .char-name {
-    font-size: 1.05rem;
-  }
-
-  .char-persona,
-  .player-brief {
-    font-size: 0.95rem;
-    line-height: 1.5;
-  }
-
-  .house-rules {
-    font-size: 0.8rem;
-  }
-
-  .meters {
-    margin-top: auto;
+  .badge-row {
+    order: -1;
+    margin: 0 0 1.6rem;
+    gap: 0.65rem;
   }
 
   .day-badge {
-    align-self: flex-start;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--accent);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+  }
+
+  .archive-flag,
+  .replay-flag {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #9ba3af;
+    font-size: 0.66rem;
+  }
+
+  .scenario-title {
+    margin: 0 0 1.25rem;
+    font-size: clamp(1.55rem, 2vw, 1.9rem);
+    font-weight: 650;
+    line-height: 1.18;
+    letter-spacing: -0.025em;
+  }
+
+  .character-line {
+    position: relative;
+    margin: 0;
+    padding: 1.15rem 0;
+    gap: 0.25rem;
+    border-top: 1px solid #2b3039;
+    border-bottom: 1px solid #2b3039;
+  }
+
+  .character-line::before {
+    content: 'Counterparty';
+    color: #737c8a;
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .char-name {
+    margin-top: 0.35rem;
+    color: var(--text);
+    font-size: 1rem;
+  }
+
+  .char-persona {
+    color: #929aa6;
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  .brief-block {
+    margin-top: 1.4rem;
+  }
+
+  .brief-label {
+    margin-bottom: 0.65rem;
+  }
+
+  .player-brief {
+    margin: 0;
+    color: #c4c9d1;
+    font-size: 0.86rem;
+    line-height: 1.6;
+    white-space: pre-line;
+  }
+
+  .negotiation-status {
+    grid-column: 3;
+    grid-row: 2 / 5;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 1.75rem 1.35rem;
+    overflow-y: auto;
+    border-left: 1px solid #2b3039;
+    background: #111419;
+  }
+
+  .status-heading {
+    padding-bottom: 1.25rem;
+  }
+
+  .status-heading strong {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: 0.6rem;
+    color: #d7dbe1;
+    font-size: 0.84rem;
+    font-weight: 600;
+  }
+
+  .status-heading strong::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-2);
+    box-shadow: 0 0 0 3px rgba(79, 209, 197, 0.1);
+  }
+
+  .status-primary {
+    padding: 1.25rem 0 1.4rem;
+    border-top: 1px solid #2b3039;
+    border-bottom: 1px solid #2b3039;
+  }
+
+  .status-primary span,
+  .status-identity span {
+    display: block;
+    margin-bottom: 0.4rem;
+    color: #7f8793;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .status-primary strong {
+    display: block;
+    color: var(--accent);
+    font-size: clamp(1.65rem, 2.2vw, 2.1rem);
+    font-weight: 700;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+  }
+
+  .status-facts {
+    margin: 0;
+  }
+
+  .status-facts > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.9rem 0;
+    border-bottom: 1px solid #252a32;
+  }
+
+  .status-facts dt {
+    color: #7f8793;
+    font-size: 0.72rem;
+  }
+
+  .status-facts dd {
+    margin: 0;
+    color: #e2e5e9;
+    font-size: 0.78rem;
+    font-weight: 650;
+    text-align: right;
+  }
+
+  .status-identity {
+    margin-top: auto;
+    padding-top: 1.5rem;
+  }
+
+  .status-identity strong {
+    color: #dfe3e8;
+    font-size: 0.84rem;
+  }
+
+  .status-guidance {
+    margin: 1.35rem 0 0;
+    color: #737c88;
+    font-size: 0.72rem;
+    line-height: 1.5;
   }
 
   .chat-log {
     grid-column: 2;
-    grid-row: 1;
-    padding: 1.4rem 1.6rem 0.6rem;
-    gap: 0.7rem;
+    grid-row: 2;
+    padding: 1.35rem 2rem 0.5rem;
+    gap: 0;
+    background: #171a20;
+  }
+
+  .chat-log::before {
+    content: 'Negotiation transcript';
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid #2b3039;
+    color: #737c8a;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
   }
 
   .bubble {
-    max-width: 65%;
-    font-size: 1rem;
-    line-height: 1.45;
-    padding: 0.65rem 0.95rem;
+    position: relative;
+    align-self: stretch;
+    width: 100%;
+    max-width: none;
+    min-height: 4.25rem;
+    padding: 1.15rem 0.75rem 1.15rem 7.25rem;
+    border-bottom: 1px solid #262b33;
+    border-radius: 0;
+    background: transparent;
+    color: #e5e7eb;
+    font-size: 0.96rem;
+    line-height: 1.6;
+    animation: desktop-line-in 0.16s ease-out;
+  }
+
+  @keyframes desktop-line-in {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .bubble::before {
+    content: attr(data-speaker);
+    position: absolute;
+    top: 1.35rem;
+    left: 0;
+    width: 6.25rem;
+    color: #87909c;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1.25;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bubble.character,
+  .bubble.user {
+    align-self: stretch;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .bubble.user {
+    background: rgba(255, 255, 255, 0.018);
+    box-shadow: inset 2px 0 0 rgba(79, 209, 197, 0.45);
+  }
+
+  .bubble.user::before {
+    color: var(--accent-2);
+  }
+
+  .bubble.system {
+    min-height: 0;
+    padding: 0.8rem;
+    border-bottom: 1px solid #262b33;
+    text-align: center;
+  }
+
+  .bubble.system::before {
+    display: none;
+  }
+
+  .bubble.typing {
+    padding: 1.45rem 0.75rem 1.45rem 7.25rem;
   }
 
   .opener-chips {
     grid-column: 2;
-    grid-row: 2;
-    padding: 0.6rem 1.6rem 0.1rem;
+    grid-row: 3;
+    padding: 0.75rem 2rem 0.4rem;
+    gap: 0.45rem;
+    border-top: 1px solid #2b3039;
+    background: #171a20;
+  }
+
+  .opener-chips-label {
+    margin-bottom: 0.15rem;
+    color: #7f8793;
+    font-size: 0.68rem;
+  }
+
+  .opener-chip {
+    border-color: #343a44;
+    border-radius: 6px;
+    background: transparent;
+    color: #b9bfc8;
+    padding: 0.38rem 0.65rem;
+    font-size: 0.72rem;
+  }
+
+  .opener-chip:hover,
+  .opener-chip:focus-visible {
+    border-color: #687180;
+    background: #1d2128;
+    color: var(--text);
   }
 
   .input-row {
     grid-column: 2;
-    grid-row: 3;
-    display: flex;
+    grid-row: 4;
     position: static;
-    padding: 1rem 1.6rem 1.25rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 0.55rem;
+    padding: 0.85rem 2rem 1.15rem;
+    border-top: 0;
+    background: #171a20;
+  }
+
+  .input-field {
+    grid-column: auto;
+    min-height: 3.5rem;
+    border-color: #353b45;
+    border-radius: 8px;
+    background: #0f1217;
   }
 
   #chat-input {
-    font-size: 1rem;
-    padding: 0.7rem 0.25rem 0.7rem 1.1rem;
+    padding: 0.95rem 0.35rem 0.95rem 1rem;
+    font-size: 0.95rem;
+  }
+
+  .char-counter {
+    padding-right: 0.75rem;
+    font-size: 0.66rem;
+  }
+
+  #accept-btn,
+  #send-btn {
+    min-height: 3.5rem;
+    border-radius: 8px;
+    padding: 0 1rem;
+    font-size: 0.82rem;
+  }
+
+  #accept-btn {
+    border-color: #5d513c;
+    color: #d5ae70;
+  }
+
+  #accept-btn:hover:not(:disabled),
+  #accept-btn:focus-visible {
+    border-color: var(--accent);
   }
 
   .end-panel {
-    align-items: center;
-    border-radius: 18px;
+    align-items: stretch;
+    padding: 4.5rem clamp(2.5rem, 6vw, 6rem) 3rem;
+    border-radius: 0;
+    background: #101318;
+    backdrop-filter: none;
+    overflow-y: auto;
   }
 
   .end-card {
-    max-width: 460px;
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 1.8rem 1.8rem 2rem;
-    max-height: 80vh;
+    width: min(100%, 980px);
+    max-width: 980px;
+    max-height: none;
+    margin: auto;
+    padding: 0;
+    display: grid;
+    grid-template-columns: minmax(280px, 0.85fr) minmax(360px, 1.15fr);
+    grid-auto-rows: min-content;
+    column-gap: clamp(2.5rem, 5vw, 5rem);
+    row-gap: 1rem;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    animation: desktop-line-in 0.2s ease-out;
   }
 
-  .leaderboard-overlay {
-    align-items: center;
+  .end-card:not(.replay-end-card) .end-result {
+    grid-column: 1;
+    grid-row: 1;
+    text-align: left;
   }
 
-  .leaderboard-card {
-    border-radius: 20px;
-    max-height: 78vh;
+  .end-card:not(.replay-end-card) .end-score {
+    grid-column: 1;
+    grid-row: 2;
+    text-align: left;
   }
 
+  .end-card:not(.replay-end-card) .end-percentile {
+    grid-column: 1;
+    grid-row: 3;
+    text-align: left;
+  }
+
+  .end-card:not(.replay-end-card) .end-meta {
+    grid-column: 1;
+    grid-row: 4;
+  }
+
+  .end-card:not(.replay-end-card) .history-box {
+    grid-column: 1;
+    grid-row: 5;
+  }
+
+  .end-card:not(.replay-end-card) .share-card {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: start;
+  }
+
+  .end-card:not(.replay-end-card) .claim-box {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .end-card:not(.replay-end-card) .end-actions {
+    grid-column: 2;
+    grid-row: 4 / span 2;
+    align-content: start;
+  }
+
+  .end-card:not(.replay-end-card) .countdown-box,
+  .end-card:not(.replay-end-card) > .back-to-today-btn {
+    grid-column: 2;
+    grid-row: 6;
+  }
+
+  .end-outcome {
+    font-size: clamp(2rem, 3vw, 3rem);
+    letter-spacing: -0.035em;
+  }
+
+  .end-score {
+    padding: 1.4rem 0;
+    border-top-style: solid;
+    border-bottom-style: solid;
+  }
+
+  .end-score-number {
+    font-size: clamp(3.5rem, 6vw, 5rem);
+    letter-spacing: -0.05em;
+  }
+
+  .share-card {
+    min-height: 11rem;
+    padding: 1.3rem;
+    border-radius: 8px;
+    background: #15191f;
+    font-size: 0.92rem;
+  }
+
+  .end-actions {
+    gap: 0.5rem;
+  }
+
+  .copy-btn,
+  .replay-btn,
+  .end-actions .leaderboard-btn,
+  .back-to-today-btn {
+    border-radius: 7px;
+  }
+
+  .replay-end-card {
+    max-width: 680px;
+    grid-template-columns: 1fr;
+    padding: 2.25rem;
+    border: 1px solid #2b3039;
+    border-radius: 10px;
+    background: #15191f;
+  }
+
+  .replay-end-card > * {
+    grid-column: 1;
+  }
+
+  .replay-end-badge {
+    justify-self: center;
+  }
+
+  .leaderboard-overlay,
   .archive-overlay {
     align-items: center;
   }
 
+  .leaderboard-card,
   .archive-card {
-    border-radius: 20px;
+    border-radius: 10px;
     max-height: 78vh;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1199px) {
+  .game {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .negotiation-status {
+    display: none;
   }
 }
 
