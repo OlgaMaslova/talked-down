@@ -26,7 +26,7 @@ Generated scenario_secrets.secret_spec shape follows actor.pb.js:
 
 var PLAYWRIGHT_GENERATOR = "playwright";
 var MAX_FULL_CYCLES = 3;
-var MAX_GENERATION_ATTEMPTS = 3;
+var CANDIDATES_PER_CYCLE = 3;
 var RECENT_LIMIT = 14;
 
 function env(name) {
@@ -223,15 +223,18 @@ function fetchRecentGeneratedScenarios(app) {
     var secretRecord = findSecretForScenario(app, scenario.id);
     var spec = secretRecord ? getJSONField(secretRecord, "secret_spec", {}) : {};
     var levers = spec.levers || {};
+    var publicScenario = scenarioPublicPayload(scenario);
     recent.push({
-      title: scenario.getString("title"),
-      theme: spec.item || null,
+      // Keep validation metadata for all 14 recent generated scenarios.
+      title: publicScenario.title,
       frame: spec.frame || null,
       levers: {
         rewards: safeArray(levers.rewards),
         punishes: safeArray(levers.punishes)
       },
-      solution_hint: spec.concession_style || spec.objective || null
+      // LLM context uses only the first five, as complete scenarios.
+      public: publicScenario,
+      secret: spec
     });
   }
   return recent;
@@ -242,7 +245,7 @@ function generatedScenarioSystemPrompt() {
     "You are PLAYWRIGHT for Talked Down, a daily negotiation game where the player wins by chatting with an AI-played character and negotiating the best possible outcome (price, terms, or persuasion) before the character's patience or the turn limit runs out.",
     "Your job: invent exactly one fresh, playable, fair scenario for the requested UTC date — setting, fictional character personality, opening line, and the hidden negotiation parameters the actor and scorer will use.",
     "Variety is mandatory. Rotate frames among: buy, sell, defend, multi_issue, non_price — BUT heavily favor amount/price negotiations: roughly 5 out of every 6 scenarios must be a priced frame (buy, sell, or defend with a concrete opening price the player haggles over). Use non_price or multi_issue only occasionally (about 1 in 6), and never two non-priced days in a row.",
-    "Rotate the setting/profession/domain every day across wildly different worlds (street food, shipping docks, space stations, farming, courtrooms, music, sports, fantasy, tech, travel, antiques, medicine, crafts...). NEVER reuse or closely echo a theme, item, or setting that appears in the recent-scenarios list — especially recent_themes_last_5_days. If art/galleries appeared recently, art is forbidden.",
+    "Rotate the setting/profession/domain every day across wildly different worlds (street food, shipping docks, space stations, farming, courtrooms, music, sports, fantasy, tech, travel, antiques, medicine, crafts...). NEVER reuse or closely echo a theme, item, or setting that appears in the complete recent scenarios supplied in the user context. If art/galleries appeared recently, art is forbidden.",
     "Frame meanings are from the PLAYER'S story: buy = player buys from character; sell = player sells to character; defend = player defends their own position; multi_issue = trading terms beats grinding price; non_price = persuasion without money, e.g. talk a dragon into letting you pass.",
     "The secret direction is the CHARACTER'S price side: direction='sell' when the character is selling and cannot accept below floor_price; direction='buy' when the character is buying and cannot pay above floor_price; direction=null only for non_price.",
     "Levers must rotate and sometimes INVERT expectations: e.g. character punishes flattery, wastes messages, respects bluntness, rewards silence/walkaway, or dislikes over-empathy. Never reuse the same solution.",
@@ -257,18 +260,24 @@ function generatedScenarioSystemPrompt() {
   ].join("\n");
 }
 
-function buildGenerationMessages(targetDate, recent, generationAttempt, cycle) {
-  var recentThemes = [];
-  for (var ti = 0; ti < recent.length && ti < 5; ti++) {
-    recentThemes.push({ title: recent[ti].title || null, theme: recent[ti].theme || null });
+function completeRecentScenarioPayload(recent) {
+  var complete = [];
+  for (var i = 0; i < recent.length && i < 5; i++) {
+    complete.push({
+      public: recent[i].public || {},
+      secret: recent[i].secret || {}
+    });
   }
+  return complete;
+}
+
+function buildGenerationMessages(targetDate, recent, candidateNumber, cycle) {
   var user = {
     target_date_utc: targetDate,
     cycle: cycle,
-    generation_attempt: generationAttempt,
-    recently_used_do_not_repeat_frames_levers_solutions: recent,
-    recent_themes_last_5_days: recentThemes,
-    instruction: "Create tomorrow's playable scenario. Avoid every recent frame/lever/solution pattern above, choose a setting/domain absent from recent_themes_last_5_days, and if the most recent frame exists, choose a different frame."
+    candidate_number: candidateNumber,
+    recent_generated_scenarios: completeRecentScenarioPayload(recent),
+    instruction: "Create one playable scenario for tomorrow. Use the complete recent scenarios only as history: avoid their frame, lever, solution, setting, domain, protagonist, and premise patterns. If the most recent frame exists, choose a different frame."
   };
   return [
     { role: "system", content: generatedScenarioSystemPrompt() },
@@ -467,22 +476,75 @@ function normalizeAndValidateGenerated(raw, recent) {
   return { public: pub, secret: secret };
 }
 
+function buildDiversityJudgeMessages(recent, candidates) {
+  var system = [
+    "You are the DIVERSITY JUDGE for a daily fictional negotiation game.",
+    "You receive the complete five most recent generated scenarios and three complete, server-validated candidate scenarios.",
+    "Return JSON only with exactly this shape: {\"candidate_index\":0,\"reason\":\"short reason\"}.",
+    "Choose exactly one candidate_index from 0, 1, or 2. Choose the candidate that is most meaningfully distinct from the recent scenarios while still clearly playable.",
+    "Judge meaningful distinction by setting/domain, protagonist and neutral persona, activity or negotiation premise, and opening situation. Do not prefer shallow wording changes when the underlying scenario is substantially similar.",
+    "All candidates already passed server validation. Give one short reason for your selection."
+  ].join("\n");
+  var payload = {
+    recent_generated_scenarios: completeRecentScenarioPayload(recent),
+    candidates: candidates
+  };
+  return [
+    { role: "system", content: system },
+    { role: "user", content: JSON.stringify(payload) }
+  ];
+}
+
+function selectDiverseScenarioCandidate(app, targetDate, cycle, recent, candidates) {
+  try {
+    if (!candidates || candidates.length !== CANDIDATES_PER_CYCLE) {
+      throw new Error("diversity judge requires exactly " + CANDIDATES_PER_CYCLE + " candidates");
+    }
+    var judge = openai.chatJSON(
+      buildDiversityJudgeMessages(recent, candidates),
+      { temperature: 0, timeout: 60, context: "scenario_diversity_judge", model: env("PLAYWRIGHT_MODEL") || "gpt-5.4-mini" }
+    );
+    if (!judge || typeof judge !== "object" || Array.isArray(judge)) {
+      throw new Error("diversity judge output is not an object");
+    }
+    var index = judge.candidate_index;
+    var reason = judge.reason;
+    if (typeof index !== "number" || !isFinite(index) || Math.floor(index) !== index || index < 0 || index >= candidates.length) {
+      throw new Error("diversity judge candidate_index must be an integer from 0 to " + (candidates.length - 1));
+    }
+    if (typeof reason !== "string" || !trimString(reason) || trimString(reason).length > 320) {
+      throw new Error("diversity judge reason must be a short non-empty string");
+    }
+    var conciseReason = trimString(reason).replace(/\s+/g, " ");
+    logInfo(app, "nightly_playwright diversity judge selected candidate " + index + " for " + targetDate + " (cycle " + cycle + "): " + conciseReason.slice(0, 180));
+    return candidates[index];
+  } catch (err) {
+    logError(app, "nightly_playwright diversity judge rejected for " + targetDate + " (cycle " + cycle + "): " + err.message);
+    throw err;
+  }
+}
+
 function generateScenarioWithRetries(app, targetDate, cycle) {
   var recent = fetchRecentGeneratedScenarios(app);
+  var candidates = [];
   var errors = [];
-  for (var attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
+  for (var candidateNumber = 1; candidateNumber <= CANDIDATES_PER_CYCLE; candidateNumber++) {
     try {
       var raw = openai.chatJSON(
-        buildGenerationMessages(targetDate, recent, attempt, cycle),
+        buildGenerationMessages(targetDate, recent, candidateNumber, cycle),
         { temperature: 0.95, timeout: 60, context: "scenario_generation", model: env("PLAYWRIGHT_MODEL") || "gpt-5.4-mini" }
       );
-      return normalizeAndValidateGenerated(raw, recent);
+      candidates.push(normalizeAndValidateGenerated(raw, recent));
     } catch (err) {
-      errors.push("attempt " + attempt + ": " + err.message);
-      logError(app, "nightly_playwright generation invalid for " + targetDate + " (cycle " + cycle + ", attempt " + attempt + "): " + err.message);
+      errors.push("candidate " + candidateNumber + ": " + err.message);
+      logError(app, "nightly_playwright generation invalid for " + targetDate + " (cycle " + cycle + ", candidate " + candidateNumber + "): " + err.message);
     }
   }
-  throw new Error(errors.join(" | "));
+  if (candidates.length !== CANDIDATES_PER_CYCLE) {
+    throw new Error(errors.join(" | ") || "did not produce three valid candidates");
+  }
+  logInfo(app, "nightly_playwright generated " + CANDIDATES_PER_CYCLE + " valid candidates for " + targetDate + " (cycle " + cycle + ")");
+  return selectDiverseScenarioCandidate(app, targetDate, cycle, recent, candidates);
 }
 
 function createDraftScenario(app, targetDate, generated) {
