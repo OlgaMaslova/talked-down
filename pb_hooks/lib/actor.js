@@ -874,9 +874,9 @@ function replayAvailabilityFromDailyScore(scoreRecord, nowMs) {
   if (createdAtMs > 0) {
     return createdAtMs + REPLAY_COOLDOWN_MS;
   }
-  // A score should always have `created`; if a malformed legacy record lacks
-  // it, fail closed for one cooldown rather than accidentally opening replay.
-  return Math.max(0, Number(nowMs) || Date.now()) + REPLAY_COOLDOWN_MS;
+  // Scores created before the timestamp migration have no reliable creation
+  // time. They are already qualifying daily scores, so do not lock them out.
+  return Math.max(0, Number(nowMs) || Date.now());
 }
 
 function findReplayMetricsRecord(app, sessionToken) {
