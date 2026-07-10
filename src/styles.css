@@ -581,6 +581,25 @@ body {
   color: var(--accent-2);
 }
 
+.end-price {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  text-align: center;
+}
+
+.end-price span {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.end-price strong {
+  color: var(--text);
+  font-size: 1.25rem;
+}
+
 .end-percentile {
   font-size: 0.8rem;
   margin-top: 0.3rem;
@@ -1514,11 +1533,14 @@ body {
   }
 
   .bubble.user {
+    padding-left: 8rem;
     background: rgba(255, 255, 255, 0.018);
     box-shadow: inset 2px 0 0 rgba(79, 209, 197, 0.45);
   }
 
   .bubble.user::before {
+    left: 0.85rem;
+    width: 5.75rem;
     color: var(--accent-2);
   }
 
@@ -1682,41 +1704,41 @@ body {
 
   .end-card:not(.replay-end-card) .end-percentile {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 4;
     text-align: left;
   }
 
   .end-card:not(.replay-end-card) .end-meta {
     grid-column: 1;
-    grid-row: 4;
+    grid-row: 5;
   }
 
   .end-card:not(.replay-end-card) .history-box {
     grid-column: 1;
-    grid-row: 5;
+    grid-row: 6;
   }
 
-  .end-card:not(.replay-end-card) .share-card {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    align-self: start;
+  .end-card:not(.replay-end-card) .end-price {
+    grid-column: 1;
+    grid-row: 3;
+    align-items: flex-start;
+    text-align: left;
   }
 
   .end-card:not(.replay-end-card) .claim-box {
     grid-column: 2;
-    grid-row: 3;
+    grid-row: 1;
   }
 
   .end-card:not(.replay-end-card) .end-actions {
     grid-column: 2;
-    grid-row: 4 / span 2;
+    grid-row: 2 / span 3;
     align-content: start;
   }
 
-  .end-card:not(.replay-end-card) .countdown-box,
   .end-card:not(.replay-end-card) > .back-to-today-btn {
     grid-column: 2;
-    grid-row: 6;
+    grid-row: 5;
   }
 
   .end-outcome {
@@ -1735,16 +1757,31 @@ body {
     letter-spacing: -0.05em;
   }
 
-  .share-card {
-    min-height: 11rem;
-    padding: 1.3rem;
-    border-radius: 8px;
-    background: #15191f;
-    font-size: 0.92rem;
+  .end-price strong {
+    font-size: 1.65rem;
   }
 
-  .end-actions {
+  .end-card:not(.replay-end-card) .share-card,
+  .end-card:not(.replay-end-card) .countdown-box {
+    display: none;
+  }
+
+  .end-card:not(.replay-end-card) .end-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
     gap: 0.5rem;
+  }
+
+  .end-card:not(.replay-end-card) .copy-btn,
+  .end-card:not(.replay-end-card) .replay-btn,
+  .end-card:not(.replay-end-card) .leaderboard-btn {
+    min-height: 3.4rem;
+  }
+
+  .end-card:not(.replay-end-card) .claim-btn {
+    min-height: 3.4rem;
+    border-style: solid;
+    font-size: 0.92rem;
   }
 
   .copy-btn,

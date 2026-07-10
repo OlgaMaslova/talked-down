@@ -5,7 +5,7 @@
 // The repo package.json is type:module while pb_hooks is CommonJS (goja), so
 // stage the hook files as .cjs in a temp dir before requiring them.
 import { createRequire } from "node:module";
-import { mkdtempSync, copyFileSync } from "node:fs";
+import { mkdtempSync, copyFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -207,6 +207,54 @@ check("null lever rejected", actor.validateLeverHit(spec, { levers_used: [] }, n
   };
   const guard = actor.guardReplayTurn(app, "replay-token");
   check("active replay has no in-session timer or deadline", guard.replay === true && !guard.expired && !guard.paused, guard);
+}
+
+// --- already-played response preserves the result's deal price/currency ---
+{
+  const middleware = [];
+  const actorStub = {
+    findTodaysScenario() { return { id: "scenario-1" }; },
+    findSecretForScenario() { return { id: "secret-1" }; },
+    findTodaysScoreForDevice() {
+      return {
+        getString(name) {
+          if (name === "outcome") return "deal";
+          if (name === "result_label") return "Smooth Talker";
+          return "";
+        },
+        getFloat(name) { return name === "deal_price" ? 2250 : 0; },
+        getInt(name) {
+          return { score: 65, turns: 5, percentile: 73, day_number: 4 }[name] || 0;
+        },
+      };
+    },
+    replayAvailableAtMs() { return 123456; },
+    getJSONField() { return { currency: "crowns" }; },
+    currentDayNumber() { return 4; },
+    computeStreakForDevice() { return 1; },
+  };
+  const source = readFileSync(join(here, "../pb_hooks/main.pb.js"), "utf8");
+  const loadHook = new Function("routerAdd", "routerUse", "onRecordUpdate", "__hooks", "require", "console", source);
+  loadHook(
+    () => {},
+    (handler) => middleware.push(handler),
+    () => {},
+    "/hooks",
+    () => actorStub,
+    console,
+  );
+  const response = middleware[0]({
+    request: { method: "POST", url: { path: "/api/game/session/start" } },
+    requestInfo() { return { body: { device_id: "device-1" } }; },
+    app: {},
+    json(status, body) { return { status, body }; },
+    next() { return { next: true }; },
+  });
+  check(
+    "already-played payload includes deal price and currency",
+    response.status === 200 && response.body.result.deal_price === 2250 && response.body.result.currency === "crowns",
+    response,
+  );
 }
 
 console.log(failures ? `\n${failures} FAILURES` : "\nall tests passed");

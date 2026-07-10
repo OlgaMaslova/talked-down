@@ -59,6 +59,8 @@ interface SessionStartAlreadyPlayed {
     score: number;
     result_label: string;
     outcome: string; // "deal" | "no_deal"
+    deal_price?: number | null;
+    currency?: string | null;
     turns: number;
     percentile: number;
     day_number: number;
@@ -772,6 +774,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     // server-authoritative availability time instead.
     const replayAvailableAtMs = completedAtMs + REPLAY_COOLDOWN_MS;
     const { score, label } = ctx.scoreTurn(turn);
+    const dealPrice = outcome === 'deal' && typeof turn.dealPrice === 'number' ? turn.dealPrice : null;
 
     const scoreSaved = ctx.recordScore(score, label, turn);
 
@@ -780,7 +783,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
       <div class="end-card">
         <div class="end-result">
           <p class="end-outcome ${outcome === 'deal' ? 'deal' : 'no-deal'}">
-            ${outcome === 'deal' ? (turn.dealPrice != null ? `🤝 Deal at ${formatAsk(turn.dealPrice, ctx.currency)}` : '🤝 Deal!') : '💥 No Deal'}
+            ${outcome === 'deal' ? '🤝 Deal!' : '💥 No Deal'}
           </p>
           <p class="end-detail">${outcome === 'deal' ? `Closed in ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}` : `Walked away after ${turn.state.turns} turn${turn.state.turns === 1 ? '' : 's'}`}</p>
         </div>
@@ -788,6 +791,11 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           <div class="end-score-number">${score}/100</div>
           <div class="end-score-label">${label}</div>
         </div>
+        ${
+          dealPrice !== null
+            ? `<div class="end-price"><span>Deal price</span><strong>${formatAsk(dealPrice, ctx.currency)}</strong></div>`
+            : ''
+        }
         ${ctx.archive ? '' : '<div class="end-percentile" id="end-percentile"></div>'}
         <div class="end-meta">
           <span class="handle-badge" title="Your handle on this device">🎭 ${escapeHtml(ctx.identity.handle)}${claimedBadgeHtml()}</span>
@@ -799,8 +807,8 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         <div class="end-actions">
           <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
           ${ctx.archive ? '' : replayCooldownActionHtml()}
-          <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">🏆 Best negotiators</button>
-          <button class="leaderboard-btn archive-btn" id="archive-btn-end" type="button">🗓️ Past negotiations</button>
+          <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">Best negotiators</button>
+          <button class="leaderboard-btn archive-btn" id="archive-btn-end" type="button">Past negotiations</button>
         </div>
         ${
           ctx.archive
@@ -1065,7 +1073,7 @@ async function playArchivedDay(root: HTMLElement, identity: DeviceIdentity, day:
  * Renders the same end-card layout used at the end of a live game, but for
  * a device that already finished today's negotiation: the result comes
  * straight from session/start instead of a just-completed CharacterTurn, so
- * there is no dealPrice and the streak must not be bumped again.
+ * the streak must not be bumped again.
  */
 function renderAlreadyPlayed(
   root: HTMLElement,
@@ -1078,6 +1086,10 @@ function renderAlreadyPlayed(
   const outcome: 'deal' | 'no_deal' = result.outcome === 'deal' ? 'deal' : 'no_deal';
   const effectiveDay = result.day_number || dayNumber;
   const streak = result.streak && result.streak > 0 ? result.streak : getStoredStreak();
+  const dealPrice =
+    outcome === 'deal' && typeof result.deal_price === 'number' && Number.isFinite(result.deal_price)
+      ? result.deal_price
+      : null;
   // The session/start payload is authoritative after a reload. Keep a
   // conservative local fallback only for an older or malformed response.
   const resolvedReplayAvailableAtMs = Number.isFinite(replayAvailableAtMs)
@@ -1115,6 +1127,11 @@ function renderAlreadyPlayed(
             <div class="end-score-number">${result.score}/100</div>
             <div class="end-score-label">${escapeHtml(result.result_label)}</div>
           </div>
+          ${
+            dealPrice !== null
+              ? `<div class="end-price"><span>Deal price</span><strong>${formatAsk(dealPrice, result.currency ?? null)}</strong></div>`
+              : ''
+          }
           <div class="end-percentile" id="end-percentile">You scored better than <strong>${result.percentile}%</strong> of today\u2019s negotiators</div>
           <div class="end-meta">
             <span class="handle-badge" title="Your handle on this device">\ud83c\udfad ${escapeHtml(identity.handle)}${claimedBadgeHtml()}</span>
@@ -1126,8 +1143,8 @@ function renderAlreadyPlayed(
           <div class="end-actions">
             <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
             ${replayCooldownActionHtml()}
-            <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">🏆 Best negotiators</button>
-            <button class="leaderboard-btn archive-btn" id="archive-btn-end" type="button">🗓️ Past negotiations</button>
+            <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">Best negotiators</button>
+            <button class="leaderboard-btn archive-btn" id="archive-btn-end" type="button">Past negotiations</button>
           </div>
           <div class="countdown-box">
             Next negotiation in

@@ -29,8 +29,9 @@ routerUse(function(e) {
   if (!scenario) {
     return e.next();
   }
+  var secretRecord;
   try {
-    actorLib.findSecretForScenario(e.app, scenario.id);
+    secretRecord = actorLib.findSecretForScenario(e.app, scenario.id);
   } catch (err) {
     return e.next();
   }
@@ -40,6 +41,10 @@ routerUse(function(e) {
     return e.next();
   }
 
+  var scoreOutcome = score.getString("outcome");
+  var storedDealPrice = scoreOutcome === "deal" ? score.getFloat("deal_price") : 0;
+  var secretSpec = actorLib.getJSONField(secretRecord, "secret_spec", {});
+
   return e.json(200, {
     llm: true,
     already_played: true,
@@ -47,7 +52,9 @@ routerUse(function(e) {
     result: {
       score: score.getInt("score"),
       result_label: score.getString("result_label"),
-      outcome: score.getString("outcome"),
+      outcome: scoreOutcome,
+      deal_price: storedDealPrice > 0 ? storedDealPrice : null,
+      currency: String(secretSpec.currency || ""),
       turns: score.getInt("turns"),
       percentile: score.getInt("percentile"),
       day_number: score.getInt("day_number") || actorLib.currentDayNumber(),
