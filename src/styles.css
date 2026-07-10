@@ -723,84 +723,10 @@ body {
   text-align: center;
 }
 
-.replay-timer {
-  margin-top: 0.7rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid rgba(79, 209, 197, 0.55);
-  border-radius: 12px;
-  background: rgba(79, 209, 197, 0.08);
-}
-
-.replay-timer-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  color: var(--text-dim);
-  font-size: 0.78rem;
+.replay-cooldown {
+  color: var(--text);
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.replay-timer-value {
-  color: var(--accent-2);
-  font-size: 1.25rem;
-  font-weight: 800;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.05em;
-}
-
-.replay-timer-status {
-  min-height: 1.2em;
-  margin: 0.35rem 0 0;
-  color: var(--text-dim);
-  font-size: 0.78rem;
-}
-
-.replay-timer-controls {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.45rem;
-  margin-top: 0.65rem;
-}
-
-.replay-control-btn {
-  border: 1px solid var(--accent-2);
-  border-radius: 8px;
-  padding: 0.48rem 0.6rem;
-  background: transparent;
-  color: var(--accent-2);
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.replay-control-btn:hover:not(:disabled),
-.replay-control-btn:focus-visible:not(:disabled) {
-  background: var(--accent-2);
-  color: #06231f;
-}
-
-.replay-control-btn:disabled {
-  border-color: var(--border);
-  color: var(--text-dim);
-  cursor: not-allowed;
-  opacity: 0.62;
-}
-
-.replay-timer.is-paused {
-  border-color: var(--accent);
-  background: rgba(255, 181, 69, 0.1);
-}
-
-.replay-timer.is-paused .replay-timer-value {
-  color: var(--accent);
-}
-
-.replay-timer.is-expired {
-  border-color: var(--danger);
 }
 
 .replay-end-card {

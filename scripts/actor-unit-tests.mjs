@@ -162,5 +162,52 @@ check("null lever rejected", actor.validateLeverHit(spec, { levers_used: [] }, n
   check("buy-side oversized grind snapped up", info && v.offer === 3048, { info, v });
 }
 
+// --- replay cooldown: wait before start, never time the active replay ---------
+{
+  const completedAt = Date.UTC(2026, 6, 10, 12, 0, 0);
+  const score = {
+    getString(name) { return name === "created" ? "2026-07-10 12:00:00.000Z" : ""; },
+    get(name) { return name === "created" ? "2026-07-10 12:00:00.000Z" : null; },
+  };
+  check("replay cooldown is exactly three minutes", actor.REPLAY_COOLDOWN_MS === 180000, actor.REPLAY_COOLDOWN_MS);
+  check(
+    "ranked completion blocks replay start for three minutes",
+    actor.replayAvailabilityFromDailyScore(score, completedAt) === completedAt + 180000,
+    actor.replayAvailabilityFromDailyScore(score, completedAt),
+  );
+}
+{
+  const dailyScore = {
+    getString(name) { return name === "created" ? "2026-07-10 12:00:00.000Z" : ""; },
+    get(name) { return name === "created" ? "2026-07-10 12:00:00.000Z" : null; },
+  };
+  const replayMetrics = {
+    getString(name) { return name === "updated" ? "2026-07-10 12:10:00.000Z" : ""; },
+    get(name) { return name === "updated" ? "2026-07-10 12:10:00.000Z" : null; },
+  };
+  const app = {
+    findRecordsByFilter() { return [replayMetrics]; },
+  };
+  check(
+    "replay completion starts a fresh three-minute cooldown",
+    actor.replayAvailableAtMs(app, dailyScore, "device-1", Date.UTC(2026, 6, 10, 12, 10, 30)) === Date.UTC(2026, 6, 10, 12, 13, 0),
+  );
+}
+{
+  const activeReplaySession = {
+    getString(name) {
+      if (name === "state") return JSON.stringify({ replay: true });
+      if (name === "status") return "active";
+      return "";
+    },
+    get(name) { return name === "state" ? { replay: true } : null; },
+  };
+  const app = {
+    findFirstRecordByData() { return activeReplaySession; },
+  };
+  const guard = actor.guardReplayTurn(app, "replay-token");
+  check("active replay has no in-session timer or deadline", guard.replay === true && !guard.expired && !guard.paused, guard);
+}
+
 console.log(failures ? `\n${failures} FAILURES` : "\nall tests passed");
 process.exit(failures ? 1 : 0);
