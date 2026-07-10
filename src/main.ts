@@ -506,10 +506,11 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
             <span class="brand-word">Talked Down</span>
             <span class="brand-tagline">Talk the AI down. One negotiation a day.</span>
           </div>
+          <span class="mobile-day-number">#${ctx.dayNumber}</span>
           <button type="button" class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open navigation menu" aria-controls="mobile-nav-menu" aria-expanded="false"><span aria-hidden="true">☰</span></button>
         </div>
         <div class="badge-row">
-          <span class="day-badge">Talked Down #${ctx.dayNumber}</span>
+          <span class="day-badge">#${ctx.dayNumber}</span>
           ${
             ctx.replay
               ? '<span class="replay-flag">↻ Replay · unranked</span>'
@@ -1110,10 +1111,11 @@ function renderAlreadyPlayed(
             <span class="brand-word">Talked Down</span>
             <span class="brand-tagline">Talk the AI down. One negotiation a day.</span>
           </div>
+          <span class="mobile-day-number">#${effectiveDay}</span>
           <button type="button" class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open navigation menu" aria-controls="mobile-nav-menu" aria-expanded="false"><span aria-hidden="true">☰</span></button>
         </div>
         <div class="badge-row">
-          <span class="day-badge">Talked Down #${effectiveDay}</span>
+          <span class="day-badge">#${effectiveDay}</span>
         </div>
         <h1 class="scenario-title">You\u2019ve already played today\u2019s negotiation.</h1>
         <div class="header-buttons" id="mobile-nav-menu">

@@ -146,6 +146,14 @@ body {
   color: var(--accent);
 }
 
+.mobile-day-number {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 .badge-row {
   display: flex;
   align-items: center;
@@ -155,7 +163,7 @@ body {
 }
 
 .day-badge {
-  display: inline-block;
+  display: none;
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -165,6 +173,10 @@ body {
   padding: 0.2rem 0.55rem;
   border-radius: 999px;
   margin-bottom: 0;
+}
+
+.badge-row:has(> .day-badge:only-child) {
+  display: none;
 }
 
 .archive-flag {
@@ -1485,13 +1497,22 @@ body {
     gap: 0.65rem;
   }
 
+  .badge-row:has(> .day-badge:only-child) {
+    display: flex;
+  }
+
   .day-badge {
+    display: inline-block;
     padding: 0;
     border-radius: 0;
     background: transparent;
     color: var(--accent);
     font-size: 0.68rem;
     letter-spacing: 0.12em;
+  }
+
+  .mobile-day-number {
+    display: none;
   }
 
   .archive-flag,
