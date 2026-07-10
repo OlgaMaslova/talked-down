@@ -7,6 +7,7 @@ Nightly PLAYWRIGHT + SECURITY TESTER pipeline.
 
 Generated scenario_secrets.secret_spec shape follows actor.pb.js:
 {
+  domain,
   frame:"buy"|"sell"|"defend"|"multi_issue"|"non_price",
   direction:"buy"|"sell"|null,
   item,
@@ -28,6 +29,36 @@ var PLAYWRIGHT_GENERATOR = "playwright";
 var MAX_FULL_CYCLES = 3;
 var CANDIDATES_PER_CYCLE = 3;
 var RECENT_LIMIT = 14;
+
+// Generated scenarios declare one domain from this server-owned catalog.
+// Validation checks the declaration against the story text and rejects domains
+// used by the five most recent generated scenarios.
+var DOMAIN_CATALOG = [
+  { key: "culinary", label: "food, restaurants, and cooking", cues: ["chef", "baker", "restaurant", "kitchen", "recipe", "menu", "catering", "food"] },
+  { key: "sports", label: "sports and athletic competition", cues: ["athlete", "coach", "stadium", "match", "tournament", "race", "training", "championship"] },
+  { key: "fantasy", label: "original fantasy and folklore", cues: ["dragon", "wizard", "witch", "castle", "kingdom", "enchanted", "spell", "knight", "oracle"] },
+  { key: "performing_arts", label: "theatre, dance, and live performance", cues: ["theatre", "theater", "actor", "dancer", "stage", "opera", "circus", "choreographer"] },
+  { key: "visual_arts", label: "visual art and galleries", cues: ["artist", "gallery", "painting", "sculpture", "artwork", "atelier", "exhibition", "curator"] },
+  { key: "agriculture", label: "farming and food production", cues: ["farm", "farmer", "orchard", "harvest", "livestock", "greenhouse", "vineyard", "crop"] },
+  { key: "legal_civic", label: "law, government, and civic life", cues: ["courtroom", "lawyer", "judge", "council", "permit", "ordinance", "hearing", "mayor", "diplomat"] },
+  { key: "health_medicine", label: "healthcare and medicine", cues: ["doctor", "hospital", "clinic", "surgeon", "nurse", "medicine", "medical", "therapy"] },
+  { key: "education", label: "schools and education", cues: ["school", "teacher", "professor", "student", "university", "classroom", "academy", "lecture"] },
+  { key: "music", label: "music and recording", cues: ["musician", "composer", "concert", "band", "orchestra", "instrument", "recording", "singer"] },
+  { key: "fashion", label: "fashion and textiles", cues: ["fashion", "tailor", "designer", "garment", "runway", "textile", "costume", "boutique"] },
+  { key: "travel_hospitality", label: "travel and hospitality", cues: ["hotel", "guide", "resort", "tour", "guest", "inn", "journey", "expedition"] },
+  { key: "archaeology", label: "archaeology and museums", cues: ["archaeologist", "excavation", "ruins", "museum", "artifact", "relic", "dig site"] },
+  { key: "conservation", label: "nature and conservation", cues: ["ranger", "wildlife", "forest", "conservation", "wetland", "habitat", "national park"] },
+  { key: "publishing", label: "publishing and journalism", cues: ["editor", "author", "publisher", "book", "manuscript", "newspaper", "magazine", "printing"] },
+  { key: "archives_libraries", label: "archives and libraries", cues: ["archive", "archivist", "library", "librarian", "tome", "rare book", "restricted wing"] },
+  { key: "architecture", label: "architecture and property", cues: ["architect", "building", "construction", "renovation", "blueprint", "property", "tenant", "housing"] },
+  { key: "science_research", label: "science and research", cues: ["scientist", "laboratory", "research", "experiment", "observatory", "biologist", "chemist"] },
+  { key: "animals", label: "animals and animal care", cues: ["veterinarian", "horse", "stable", "zoo", "animal", "breeder", "sanctuary"] },
+  { key: "finance", label: "finance and investment", cues: ["banker", "investor", "loan", "insurance", "fund", "accountant", "shares"] },
+  { key: "community_events", label: "community events and celebrations", cues: ["festival", "wedding", "parade", "celebration", "organizer", "venue", "fundraiser"] },
+  { key: "technology_games", label: "technology and games", cues: ["software", "arcade", "developer", "robot", "digital", "computer", "console", "network"] },
+  { key: "antiques_crafts", label: "antiques and artisan crafts", cues: ["antique", "restoration", "collector", "ceramic", "jewelry", "jeweller", "watchmaker", "furniture", "auction"] },
+  { key: "industrial_transport", label: "transport and industrial operations", cues: ["dock", "harbor", "ferry", "station", "mechanic", "cargo", "engine", "reactor", "battery", "freight", "ship", "shuttle"] }
+];
 
 function env(name) {
   try {
@@ -198,24 +229,112 @@ function scenarioPublicPayload(record) {
   };
 }
 
+function domainCatalogEntry(key) {
+  key = trimString(key).toLowerCase();
+  for (var i = 0; i < DOMAIN_CATALOG.length; i++) {
+    if (DOMAIN_CATALOG[i].key === key) {
+      return DOMAIN_CATALOG[i];
+    }
+  }
+  return null;
+}
+
+function textContainsDomainCue(text, cue) {
+  var escaped = String(cue || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!escaped) {
+    return false;
+  }
+  return new RegExp("(^|[^a-z])" + escaped.replace(/ /g, "\\s+") + "(?:s|es)?([^a-z]|$)", "i").test(String(text || ""));
+}
+
+function domainScores(text) {
+  var scores = {};
+  for (var i = 0; i < DOMAIN_CATALOG.length; i++) {
+    var entry = DOMAIN_CATALOG[i];
+    var score = 0;
+    for (var j = 0; j < entry.cues.length; j++) {
+      if (textContainsDomainCue(text, entry.cues[j])) {
+        score++;
+      }
+    }
+    if (score > 0) {
+      scores[entry.key] = score;
+    }
+  }
+  return scores;
+}
+
+function scenarioDomainText(pub, secret) {
+  pub = pub || {};
+  secret = secret || {};
+  return [
+    pub.title,
+    pub.character_persona,
+    pub.opening_message,
+    pub.player_brief,
+    secret.item,
+    secret.objective
+  ].join("\n");
+}
+
+function classifiedDomainKeys(pub, secret) {
+  var scores = domainScores(scenarioDomainText(pub, secret));
+  var keys = [];
+  for (var key in scores) {
+    if (scores.hasOwnProperty(key)) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
+function allowedDomainPayload() {
+  var result = [];
+  for (var i = 0; i < DOMAIN_CATALOG.length; i++) {
+    result.push({
+      key: DOMAIN_CATALOG[i].key,
+      description: DOMAIN_CATALOG[i].label,
+      recognizable_cues: DOMAIN_CATALOG[i].cues
+    });
+  }
+  return result;
+}
+
+function recentDomainKeys(recent, limit) {
+  var result = [];
+  var seen = {};
+  recent = safeArray(recent);
+  limit = intOrDefault(limit, 5);
+  for (var i = 0; i < recent.length && i < limit; i++) {
+    var keys = safeArray(recent[i].domain_keys);
+    if (recent[i].domain) {
+      keys = keys.concat([recent[i].domain]);
+    }
+    for (var j = 0; j < keys.length; j++) {
+      var key = trimString(keys[j]).toLowerCase();
+      if (key && !seen[key]) {
+        seen[key] = true;
+        result.push(key);
+      }
+    }
+  }
+  return result;
+}
+
 function fetchRecentGeneratedScenarios(app) {
   var recent = [];
-  var records = [];
+  var records;
   try {
     records = app.findRecordsByFilter(
       "scenarios",
       "generator = {:generator}",
-      "-scenario_date,-created",
+      "-created,-day_index",
       RECENT_LIMIT,
       0,
       { generator: PLAYWRIGHT_GENERATOR }
     );
   } catch (err) {
-    try {
-      records = app.findRecordsByFilter("scenarios", "", "-created", RECENT_LIMIT, 0);
-    } catch (err2) {
-      return recent;
-    }
+    throw new Error("recent scenario history query failed: " + err.message);
   }
 
   for (var i = 0; i < records.length && recent.length < RECENT_LIMIT; i++) {
@@ -224,6 +343,11 @@ function fetchRecentGeneratedScenarios(app) {
     var spec = secretRecord ? getJSONField(secretRecord, "secret_spec", {}) : {};
     var levers = spec.levers || {};
     var publicScenario = scenarioPublicPayload(scenario);
+    var domains = classifiedDomainKeys(publicScenario, spec);
+    var declaredDomain = trimString(spec.domain).toLowerCase();
+    if (declaredDomain && domains.indexOf(declaredDomain) === -1) {
+      domains.push(declaredDomain);
+    }
     recent.push({
       // Keep validation metadata for all 14 recent generated scenarios.
       title: publicScenario.title,
@@ -232,6 +356,8 @@ function fetchRecentGeneratedScenarios(app) {
         rewards: safeArray(levers.rewards),
         punishes: safeArray(levers.punishes)
       },
+      domain: declaredDomain || null,
+      domain_keys: domains,
       // LLM context uses only the first five, as complete scenarios.
       public: publicScenario,
       secret: spec
@@ -245,7 +371,7 @@ function generatedScenarioSystemPrompt() {
     "You are PLAYWRIGHT for Talked Down, a daily negotiation game where the player wins by chatting with an AI-played character and negotiating the best possible outcome (price, terms, or persuasion) before the character's patience or the turn limit runs out.",
     "Your job: invent exactly one fresh, playable, fair scenario for the requested UTC date — setting, fictional character personality, opening line, and the hidden negotiation parameters the actor and scorer will use.",
     "Variety is mandatory. Rotate frames among: buy, sell, defend, multi_issue, non_price — BUT heavily favor amount/price negotiations: roughly 5 out of every 6 scenarios must be a priced frame (buy, sell, or defend with a concrete opening price the player haggles over). Use non_price or multi_issue only occasionally (about 1 in 6), and never two non-priced days in a row.",
-    "Rotate the setting/profession/domain every day across wildly different worlds (street food, shipping docks, space stations, farming, courtrooms, music, sports, fantasy, tech, travel, antiques, medicine, crafts...). NEVER reuse or closely echo a theme, item, or setting that appears in the complete recent scenarios supplied in the user context. If art/galleries appeared recently, art is forbidden.",
+    "Rotate the setting/profession/domain every day across wildly different worlds. Choose secret.domain from the allowed_domains supplied in the user context. The domain must truthfully describe the scenario and must not appear in recent_domains_do_not_repeat. NEVER reuse or closely echo a theme, item, or setting that appears in the complete recent scenarios supplied in the user context.",
     "Frame meanings are from the PLAYER'S story: buy = player buys from character; sell = player sells to character; defend = player defends their own position; multi_issue = trading terms beats grinding price; non_price = persuasion without money, e.g. talk a dragon into letting you pass.",
     "The secret direction is the CHARACTER'S price side: direction='sell' when the character is selling and cannot accept below floor_price; direction='buy' when the character is buying and cannot pay above floor_price; direction=null only for non_price.",
     "Levers must rotate and sometimes INVERT expectations: e.g. character punishes flattery, wastes messages, respects bluntness, rewards silence/walkaway, or dislikes over-empathy. Never reuse the same solution.",
@@ -254,7 +380,7 @@ function generatedScenarioSystemPrompt() {
     "public.player_brief is REQUIRED and must be TERSE — exactly this format, nothing more: line 1: one short sentence introducing the opponent (who they are). Line 2: 'You are <player identity>.' Line 3: 'Goal: <what to achieve>.' For price scenarios the Goal line MUST include the currency and the character's opening ask number (equal to secret.opening_price), e.g. 'Goal: buy the boat for as little as possible. Opening ask: 12,000 credits.' For non_price scenarios the Goal line states what to persuade the character to do. No extra sentences, no scene-setting, no lever hints (no behavior/temperament/what-works-on-them clues). Keep the whole brief under 280 characters.",
     "public.character_persona must be a SHORT NEUTRAL surface description only: identity, age, role, appearance, setting (e.g. 'a middle-aged Polish market vendor'). It must contain ZERO hints about behavior, temperament, likes/dislikes, patience, what works on them, or negotiation style — all of that belongs ONLY in secret.levers and secret.actor_notes. If a phrase would help a player guess a lever ('no patience for flattery', 'respects bluntness'), it must NOT appear in any public field.",
     "public.opening_message must be ONLY the character's own spoken words, first person, addressed to the player. NO narration, NO stage directions, NO scene-setting (never 'You stand before...'), NO third-person description of the character, and NO quotation marks — write the raw speech itself. Example of CORRECT: 'Access is a privilege, not a right. What do you offer in exchange for entry?'. Example of WRONG: 'You stand before Evelyn Thorne. \"Access is a privilege,\" she states.'",
-    "Return JSON only with this exact top-level shape: {\"public\":{\"title\":string,\"character_name\":string,\"character_persona\":string,\"opening_message\":string,\"player_brief\":string},\"secret\":{\"frame\":\"buy\"|\"sell\"|\"defend\"|\"multi_issue\"|\"non_price\",\"direction\":\"buy\"|\"sell\"|null,\"item\":string,\"objective\":string,\"currency\":string|null,\"opening_price\":number|null,\"floor_price\":number|null,\"fair_price\":number|null,\"patience\":integer,\"max_turns\":integer,\"levers\":{\"rewards\":string[],\"punishes\":string[]},\"concession_style\":string,\"actor_notes\":string,\"scoring_config\":{\"max_score\":100,\"price_weight\":number,\"patience_weight\":number,\"turns_weight\":number}}}.",
+    "Return JSON only with this exact top-level shape: {\"public\":{\"title\":string,\"character_name\":string,\"character_persona\":string,\"opening_message\":string,\"player_brief\":string},\"secret\":{\"domain\":string,\"frame\":\"buy\"|\"sell\"|\"defend\"|\"multi_issue\"|\"non_price\",\"direction\":\"buy\"|\"sell\"|null,\"item\":string,\"objective\":string,\"currency\":string|null,\"opening_price\":number|null,\"floor_price\":number|null,\"fair_price\":number|null,\"patience\":integer,\"max_turns\":integer,\"levers\":{\"rewards\":string[],\"punishes\":string[]},\"concession_style\":string,\"actor_notes\":string,\"scoring_config\":{\"max_score\":100,\"price_weight\":number,\"patience_weight\":number,\"turns_weight\":number}}}.",
     "For price scenarios: use positive numeric prices. If direction='sell', require 0 < floor_price <= fair_price <= opening_price. If direction='buy', require 0 < opening_price <= fair_price <= floor_price. For non_price, use null currency/opening_price/floor_price/fair_price and direction=null.",
     "Keep public fields concise: title <=160 chars, character_name <=80, character_persona <=200, opening_message <=1000, player_brief <=280."
   ].join("\n");
@@ -265,7 +391,8 @@ function completeRecentScenarioPayload(recent) {
   for (var i = 0; i < recent.length && i < 5; i++) {
     complete.push({
       public: recent[i].public || {},
-      secret: recent[i].secret || {}
+      secret: recent[i].secret || {},
+      server_classified_domains: safeArray(recent[i].domain_keys)
     });
   }
   return complete;
@@ -276,8 +403,10 @@ function buildGenerationMessages(targetDate, recent, candidateNumber, cycle) {
     target_date_utc: targetDate,
     cycle: cycle,
     candidate_number: candidateNumber,
+    allowed_domains: allowedDomainPayload(),
+    recent_domains_do_not_repeat: recentDomainKeys(recent, 5),
     recent_generated_scenarios: completeRecentScenarioPayload(recent),
-    instruction: "Create one playable scenario for tomorrow. Use the complete recent scenarios only as history: avoid their frame, lever, solution, setting, domain, protagonist, and premise patterns. If the most recent frame exists, choose a different frame."
+    instruction: "Create one playable scenario for tomorrow. Choose a truthful secret.domain from allowed_domains that is absent from recent_domains_do_not_repeat. Use the complete recent scenarios only as history: avoid their frame, lever, solution, setting, domain, protagonist, and premise patterns. If the most recent frame exists, choose a different frame."
   };
   return [
     { role: "system", content: generatedScenarioSystemPrompt() },
@@ -353,6 +482,12 @@ function normalizeAndValidateGenerated(raw, recent) {
     errors.push("banned named real/trademarked reference: " + banned);
   }
 
+  secret.domain = trimString(secret.domain).toLowerCase();
+  var selectedDomain = domainCatalogEntry(secret.domain);
+  if (!selectedDomain) {
+    errors.push("secret.domain must be one of the allowed server domains");
+  }
+
   var validFrames = { buy: true, sell: true, defend: true, multi_issue: true, non_price: true };
   secret.frame = trimString(secret.frame);
   if (!validFrames[secret.frame]) {
@@ -387,6 +522,23 @@ function normalizeAndValidateGenerated(raw, recent) {
   if (!secret.objective) { errors.push("secret.objective required"); }
   if (!secret.concession_style) { errors.push("secret.concession_style required"); }
   if (!secret.actor_notes) { errors.push("secret.actor_notes required"); }
+
+  var candidateDomainScores = domainScores(scenarioDomainText(pub, secret));
+  if (selectedDomain && !candidateDomainScores[secret.domain]) {
+    errors.push("secret.domain does not match the scenario text; include a clear " + selectedDomain.label + " setting");
+  }
+
+  var blockedDomains = recentDomainKeys(recent, 5);
+  if (secret.domain && blockedDomains.indexOf(secret.domain) !== -1) {
+    errors.push("domain repeats one of the five most recent scenarios: " + secret.domain);
+  }
+  for (var bd = 0; bd < blockedDomains.length; bd++) {
+    var blockedKey = blockedDomains[bd];
+    if (blockedKey !== secret.domain && candidateDomainScores[blockedKey] >= 2) {
+      errors.push("scenario text substantially repeats recent domain: " + blockedKey);
+      break;
+    }
+  }
 
   secret.opening_price = numberOrNull(secret.opening_price);
   secret.floor_price = numberOrNull(secret.floor_price);
@@ -1189,5 +1341,12 @@ module.exports = {
   getBody: getBody,
   getHeader: getHeader,
   logInfo: logInfo,
-  logError: logError
+  logError: logError,
+  _test: {
+    fetchRecentGeneratedScenarios: fetchRecentGeneratedScenarios,
+    classifiedDomainKeys: classifiedDomainKeys,
+    recentDomainKeys: recentDomainKeys,
+    buildGenerationMessages: buildGenerationMessages,
+    normalizeAndValidateGenerated: normalizeAndValidateGenerated
+  }
 };
