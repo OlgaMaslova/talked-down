@@ -437,6 +437,26 @@ function showBanner(message: string, kind: 'success' | 'error'): void {
   }, 4200);
 }
 
+function bindMobileHeaderMenu(scope: HTMLElement): void {
+  const button = scope.querySelector<HTMLButtonElement>('#mobile-menu-btn');
+  const menu = scope.querySelector<HTMLElement>('#mobile-nav-menu');
+  if (!button || !menu) return;
+
+  const setOpen = (open: boolean): void => {
+    menu.classList.toggle('open', open);
+    button.classList.toggle('open', open);
+    button.setAttribute('aria-expanded', String(open));
+    button.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+  };
+
+  button.addEventListener('click', () => {
+    setOpen(!menu.classList.contains('open'));
+  });
+  menu.querySelectorAll<HTMLButtonElement>('button').forEach((item) => {
+    item.addEventListener('click', () => setOpen(false));
+  });
+}
+
 /** Everything renderGame needs, whether the negotiation is rule-engine or LLM driven. */
 interface GameContext {
   dayNumber: number;
@@ -486,6 +506,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
             <span class="brand-word">Talked Down</span>
             <span class="brand-tagline">Talk the AI down. One negotiation a day.</span>
           </div>
+          <button type="button" class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open navigation menu" aria-controls="mobile-nav-menu" aria-expanded="false"><span aria-hidden="true">☰</span></button>
         </div>
         <div class="badge-row">
           <span class="day-badge">Talked Down #${ctx.dayNumber}</span>
@@ -508,9 +529,9 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
             : ''
         }
         <p class="house-rules">House rules: ${ctx.maxTurns} message${ctx.maxTurns === 1 ? '' : 's'} max, ${ctx.maxMessageChars} characters each.</p>
-        <div class="header-buttons">
-          <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
-          <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">🗓️ Past negotiations</button>
+        <div class="header-buttons" id="mobile-nav-menu">
+          <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">Best negotiators</button>
+          <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">Past negotiations</button>
         </div>
         ${
           ctx.showAsk
@@ -570,6 +591,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     return;
   }
 
+  bindMobileHeaderMenu(root);
   if (leaderboardBtnHeader) bindLeaderboardTrigger(leaderboardBtnHeader, ctx.dayNumber);
   if (leaderboardBtnDesktop) bindLeaderboardTrigger(leaderboardBtnDesktop, ctx.dayNumber);
   if (archiveBtnHeader) {
@@ -1105,14 +1127,15 @@ function renderAlreadyPlayed(
             <span class="brand-word">Talked Down</span>
             <span class="brand-tagline">Talk the AI down. One negotiation a day.</span>
           </div>
+          <button type="button" class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open navigation menu" aria-controls="mobile-nav-menu" aria-expanded="false"><span aria-hidden="true">☰</span></button>
         </div>
         <div class="badge-row">
           <span class="day-badge">Talked Down #${effectiveDay}</span>
         </div>
         <h1 class="scenario-title">You\u2019ve already played today\u2019s negotiation.</h1>
-        <div class="header-buttons">
-          <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
-          <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">🗓️ Past negotiations</button>
+        <div class="header-buttons" id="mobile-nav-menu">
+          <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">Best negotiators</button>
+          <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">Past negotiations</button>
         </div>
       </header>
       <div class="end-panel" id="end-panel">
@@ -1154,6 +1177,8 @@ function renderAlreadyPlayed(
       </div>
     </div>
   `;
+
+  bindMobileHeaderMenu(root);
 
   const shareText = buildShareText(effectiveDay, outcome, result.turns, result.score);
   const shareCard = root.querySelector<HTMLElement>('#share-card');
