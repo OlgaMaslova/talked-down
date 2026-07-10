@@ -148,6 +148,78 @@ body {
   border-radius: 999px;
 }
 
+.replay-flag,
+.replay-end-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #06231f;
+  background: var(--accent-2);
+  padding: 0.22rem 0.58rem;
+  border-radius: 999px;
+}
+
+.replay-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.6rem 0.55rem 0.7rem;
+  background: rgba(79, 209, 197, 0.08);
+  border: 1px solid rgba(79, 209, 197, 0.42);
+  border-radius: 12px;
+}
+
+.replay-time {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.replay-time-label {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.replay-countdown {
+  color: var(--accent-2);
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
+
+.replay-pause-btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--accent-2);
+  background: transparent;
+  color: var(--accent-2);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.4rem 0.65rem;
+  cursor: pointer;
+}
+
+.replay-pause-btn:hover:not(:disabled),
+.replay-pause-btn:focus-visible {
+  background: var(--accent-2);
+  color: #06231f;
+}
+
+.replay-pause-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .header-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -645,6 +717,7 @@ body {
 }
 
 .copy-btn,
+.replay-btn,
 .countdown {
   flex: 1;
 }
@@ -662,6 +735,51 @@ body {
 
 .copy-btn.copied {
   background: var(--success);
+}
+
+.replay-btn {
+  border: 1px solid var(--accent);
+  background: rgba(255, 181, 69, 0.1);
+  color: var(--accent);
+  font-weight: 800;
+  border-radius: 10px;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.replay-btn:hover,
+.replay-btn:focus-visible {
+  background: var(--accent);
+  color: #221a08;
+}
+
+.replay-end-card {
+  align-items: stretch;
+}
+
+.replay-end-badge {
+  align-self: center;
+}
+
+.end-outcome.timeout {
+  color: var(--accent);
+}
+
+.replay-unranked-note {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  text-align: center;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.replay-end-actions .replay-btn {
+  width: 100%;
 }
 
 .countdown-box {

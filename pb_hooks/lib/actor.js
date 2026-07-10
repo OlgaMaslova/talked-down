@@ -26,6 +26,7 @@ Expected scenario_secrets.secret_spec shape:
 // server-side and surfaced to the player as a house rule (keeps per-session
 // LLM cost bounded).
 var MAX_MESSAGE_CHARS = 280;
+var REPLAY_DURATION_MS = 180000;
 
 function todayUTC() {
   return new Date().toISOString().slice(0, 10);
@@ -193,6 +194,16 @@ function newSessionRecord(app, scenario, spec, identity) {
     // Archive (past-day) play: scored but never ranked.
     state.archive = true;
     state.archive_day = intOrDefault(identity.archive_day, 0);
+  }
+  if (identity.replay) {
+    // Replay timing is entirely server-owned. The browser receives remaining
+    // time but never supplies a clock value accepted by the server.
+    state.replay = true;
+    state.replay_started_at_ms = intOrDefault(identity.replay_started_at_ms, Date.now());
+    state.replay_paused = false;
+    state.replay_paused_at_ms = null;
+    state.replay_pause_total_ms = 0;
+    state.replay_pause_count = 0;
   }
 
   record.set("scenario", scenario.id);
@@ -825,9 +836,346 @@ function computeStreakForDevice(app, deviceId) {
   }
 }
 
+function replayNonNegativeInt(value, fallback) {
+  var n = Number(value);
+  if (isNaN(n) || !isFinite(n) || n < 0) {
+    return fallback;
+  }
+  return Math.floor(n);
+}
+
+function isReplayState(state) {
+  return !!(state && state.replay);
+}
+
+function replayIsPaused(state) {
+  return !!(state && state.replay_paused && replayNonNegativeInt(state.replay_paused_at_ms, 0) > 0);
+}
+
+function replayElapsedMs(state, nowMs) {
+  state = state || {};
+  var startedAt = replayNonNegativeInt(state.replay_started_at_ms, 0);
+  if (!startedAt) {
+    return 0;
+  }
+  var now = replayNonNegativeInt(nowMs, Date.now());
+  var pauseTotal = replayNonNegativeInt(state.replay_pause_total_ms, 0);
+  var elapsed = now - startedAt - pauseTotal;
+  if (replayIsPaused(state)) {
+    elapsed -= Math.max(0, now - replayNonNegativeInt(state.replay_paused_at_ms, now));
+  }
+  return Math.max(0, Math.floor(elapsed));
+}
+
+function replayRemainingMs(state, nowMs) {
+  return Math.max(0, REPLAY_DURATION_MS - replayElapsedMs(state, nowMs));
+}
+
+function replayPauseEvents(metrics) {
+  var events = getJSONField(metrics, "pause_events", []);
+  return Array.isArray(events) ? events : [];
+}
+
+function findReplayMetricsRecord(app, sessionToken) {
+  try {
+    return app.findFirstRecordByData("replay_metrics", "session_token", String(sessionToken || ""));
+  } catch (err) {
+    return null;
+  }
+}
+
+function applyReplayMetrics(metrics, status, state, events, elapsedMs) {
+  metrics.set("status", status);
+  metrics.set("pause_count", replayNonNegativeInt(state.replay_pause_count, 0));
+  metrics.set("pause_total_ms", replayNonNegativeInt(state.replay_pause_total_ms, 0));
+  metrics.set("pause_events", JSON.stringify(events || []));
+  metrics.set("elapsed_ms", replayNonNegativeInt(elapsedMs, 0));
+}
+
+function finalizeReplayPause(state, events, nowMs, terminal) {
+  if (!replayIsPaused(state)) {
+    return;
+  }
+
+  var pausedAt = replayNonNegativeInt(state.replay_paused_at_ms, nowMs);
+  var duration = Math.max(0, replayNonNegativeInt(nowMs, Date.now()) - pausedAt);
+  state.replay_pause_total_ms = replayNonNegativeInt(state.replay_pause_total_ms, 0) + duration;
+  state.replay_paused = false;
+  state.replay_paused_at_ms = null;
+
+  var event = null;
+  for (var i = events.length - 1; i >= 0; i--) {
+    if (events[i] && (events[i].resumed_at_ms === null || typeof events[i].resumed_at_ms === "undefined") &&
+        (events[i].ended_at_ms === null || typeof events[i].ended_at_ms === "undefined")) {
+      event = events[i];
+      break;
+    }
+  }
+  if (!event) {
+    event = {
+      paused_at_ms: pausedAt,
+      active_elapsed_ms: replayElapsedMs(state, pausedAt),
+    };
+    events.push(event);
+  }
+  event.duration_ms = duration;
+  if (terminal === "resumed") {
+    event.resumed_at_ms = nowMs;
+  } else {
+    event.ended_at_ms = nowMs;
+  }
+}
+
+function newReplaySessionRecord(app, scenario, spec, identity) {
+  identity = identity || {};
+  identity.replay = true;
+  identity.replay_started_at_ms = Date.now();
+
+  var created;
+  app.runInTransaction(function(txApp) {
+    created = newSessionRecord(txApp, scenario, spec, identity);
+    var metricsCollection = txApp.findCollectionByNameOrId("replay_metrics");
+    var metrics = new Record(metricsCollection);
+    metrics.set("session_token", created.token);
+    metrics.set("device_id", String(identity.device_id || "").slice(0, 64));
+    metrics.set("day_number", currentDayNumber());
+    metrics.set("scenario", scenario.id);
+    metrics.set("status", "active");
+    metrics.set("pause_count", 0);
+    metrics.set("pause_total_ms", 0);
+    metrics.set("pause_events", "[]");
+    metrics.set("elapsed_ms", 0);
+    txApp.save(metrics);
+  });
+
+  return created;
+}
+
+function expireReplaySessionInTransaction(app, session, state, metrics, nowMs) {
+  var events = replayPauseEvents(metrics);
+  if (replayIsPaused(state)) {
+    finalizeReplayPause(state, events, nowMs, "expired");
+  }
+  var elapsed = replayElapsedMs(state, nowMs);
+  state.replay_expired_at_ms = nowMs;
+  session.set("state", JSON.stringify(state));
+  session.set("status", "expired");
+  applyReplayMetrics(metrics, "expired", state, events, elapsed);
+  app.save(session);
+  app.save(metrics);
+  return elapsed;
+}
+
+function expireReplaySession(app, sessionToken, nowMs) {
+  var result = { code: "not_found", elapsed_ms: 0 };
+  app.runInTransaction(function(txApp) {
+    var session;
+    try {
+      session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+    } catch (err) {
+      return;
+    }
+    var state = getJSONField(session, "state", {});
+    if (!isReplayState(state)) {
+      result.code = "not_replay";
+      return;
+    }
+    if (session.getString("status") === "expired") {
+      result.code = "expired";
+      result.elapsed_ms = replayElapsedMs(state, nowMs);
+      return;
+    }
+    if (session.getString("status") !== "active") {
+      result.code = "not_active";
+      return;
+    }
+    var metrics = findReplayMetricsRecord(txApp, sessionToken);
+    if (!metrics) {
+      throw new Error("replay_metrics_not_found");
+    }
+    result.code = "expired";
+    result.elapsed_ms = expireReplaySessionInTransaction(txApp, session, state, metrics, nowMs);
+  });
+  return result;
+}
+
+function updateReplayPause(app, sessionToken, action, nowMs) {
+  var result = { code: "not_found", paused: false, remaining_ms: 0 };
+  app.runInTransaction(function(txApp) {
+    var session;
+    try {
+      session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+    } catch (err) {
+      return;
+    }
+    var state = getJSONField(session, "state", {});
+    if (!isReplayState(state)) {
+      result.code = "not_replay";
+      return;
+    }
+    if (session.getString("status") === "expired") {
+      result.code = "expired";
+      return;
+    }
+    if (session.getString("status") !== "active") {
+      result.code = "not_active";
+      return;
+    }
+
+    var metrics = findReplayMetricsRecord(txApp, sessionToken);
+    if (!metrics) {
+      throw new Error("replay_metrics_not_found");
+    }
+    var elapsed = replayElapsedMs(state, nowMs);
+    if (elapsed >= REPLAY_DURATION_MS) {
+      expireReplaySessionInTransaction(txApp, session, state, metrics, nowMs);
+      result.code = "expired";
+      return;
+    }
+
+    var events = replayPauseEvents(metrics);
+    if (action === "pause" && !replayIsPaused(state)) {
+      state.replay_paused = true;
+      state.replay_paused_at_ms = nowMs;
+      state.replay_pause_count = replayNonNegativeInt(state.replay_pause_count, 0) + 1;
+      events.push({
+        paused_at_ms: nowMs,
+        active_elapsed_ms: elapsed,
+        resumed_at_ms: null,
+        duration_ms: null,
+      });
+    } else if (action === "resume" && replayIsPaused(state)) {
+      finalizeReplayPause(state, events, nowMs, "resumed");
+      elapsed = replayElapsedMs(state, nowMs);
+    }
+
+    session.set("state", JSON.stringify(state));
+    applyReplayMetrics(metrics, replayIsPaused(state) ? "paused" : "active", state, events, elapsed);
+    txApp.save(session);
+    txApp.save(metrics);
+    result.code = "ok";
+    result.paused = replayIsPaused(state);
+    result.remaining_ms = replayRemainingMs(state, nowMs);
+  });
+  return result;
+}
+
+function guardReplayTurn(app, sessionToken, nowMs) {
+  var session;
+  try {
+    session = app.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+  } catch (err) {
+    return { replay: false };
+  }
+  var state = getJSONField(session, "state", {});
+  if (!isReplayState(state)) {
+    return { replay: false };
+  }
+  if (session.getString("status") === "expired") {
+    return { replay: true, expired: true };
+  }
+  if (session.getString("status") !== "active") {
+    return { replay: true, inactive: true };
+  }
+  if (replayIsPaused(state)) {
+    return { replay: true, paused: true, remaining_ms: replayRemainingMs(state, nowMs) };
+  }
+  if (replayElapsedMs(state, nowMs) >= REPLAY_DURATION_MS) {
+    expireReplaySession(app, sessionToken, nowMs);
+    return { replay: true, expired: true };
+  }
+  return { replay: true, remaining_ms: replayRemainingMs(state, nowMs) };
+}
+
+function preserveReplayStateOnSessionUpdate(app, sessionRecord) {
+  var nextState = getJSONField(sessionRecord, "state", {});
+  if (isReplayState(nextState)) {
+    return false;
+  }
+
+  var originalState = {};
+  try {
+    originalState = getJSONField(sessionRecord.original(), "state", {});
+  } catch (err) {
+    return false;
+  }
+  if (!isReplayState(originalState)) {
+    return false;
+  }
+
+  var replayKeys = [
+    "replay",
+    "replay_started_at_ms",
+    "replay_paused",
+    "replay_paused_at_ms",
+    "replay_pause_total_ms",
+    "replay_pause_count",
+    "replay_expired_at_ms",
+  ];
+  for (var i = 0; i < replayKeys.length; i++) {
+    var key = replayKeys[i];
+    if (typeof originalState[key] !== "undefined") {
+      nextState[key] = originalState[key];
+    }
+  }
+  sessionRecord.set("state", JSON.stringify(nextState));
+  return true;
+}
+
+function completeReplayMetricsBestEffort(app, sessionToken) {
+  try {
+    var completed = false;
+    app.runInTransaction(function(txApp) {
+      var session;
+      try {
+        session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+      } catch (missingSession) {
+        return;
+      }
+      var metrics = findReplayMetricsRecord(txApp, sessionToken);
+      var state = getJSONField(session, "state", {});
+      if (!metrics) {
+        return;
+      }
+      if (metrics.getString("status") === "expired") {
+        completed = true;
+        return;
+      }
+
+      var nowMs = Date.now();
+      var events = replayPauseEvents(metrics);
+      var stateChanged = false;
+      if (replayIsPaused(state)) {
+        finalizeReplayPause(state, events, nowMs, "completed");
+        stateChanged = true;
+      }
+      var elapsed = replayElapsedMs(state, nowMs);
+      applyReplayMetrics(metrics, "completed", state, events, elapsed);
+      if (stateChanged) {
+        session.set("state", JSON.stringify(state));
+        txApp.save(session);
+      }
+      txApp.save(metrics);
+      completed = true;
+    });
+    return completed;
+  } catch (err) {
+    console.log("replay_metrics_complete_failed: " + err.message);
+    return false;
+  }
+}
+
 function saveServerScoreBestEffort(app, scenario, spec, outcome, dealPrice, turnsUsed, patienceLeft, sessionToken, sessionState) {
-  var result = computeServerScore(spec, outcome, dealPrice, turnsUsed, patienceLeft);
   sessionState = sessionState || {};
+  // Replay sessions use the ordinary turn pipeline but must never emit score
+  // records. Check the metrics row too because the legacy turn handler rebuilds
+  // its state object before this function is called.
+  if (isReplayState(sessionState) || findReplayMetricsRecord(app, sessionToken)) {
+    completeReplayMetricsBestEffort(app, sessionToken);
+    return null;
+  }
+
+  var result = computeServerScore(spec, outcome, dealPrice, turnsUsed, patienceLeft);
   var isArchive = !!sessionState.archive;
   var scoreDayNumber = isArchive
     ? (intOrDefault(sessionState.archive_day, 0) || currentDayNumber())
@@ -927,6 +1275,7 @@ function runNotaryBestEffort(sessionRecord, transcript) {
 
 module.exports = {
   MAX_MESSAGE_CHARS: MAX_MESSAGE_CHARS,
+  REPLAY_DURATION_MS: REPLAY_DURATION_MS,
   findTodaysScenario: findTodaysScenario,
   findSecretForScenario: findSecretForScenario,
   playerStatedPrice: playerStatedPrice,
@@ -934,6 +1283,7 @@ module.exports = {
   parsePriceToken: parsePriceToken,
 
   newSessionRecord: newSessionRecord,
+  newReplaySessionRecord: newReplaySessionRecord,
   publicScenarioPayload: publicScenarioPayload,
   buildDeciderMessages: buildDeciderMessages,
   buildSpeakerMessages: buildSpeakerMessages,
@@ -952,6 +1302,12 @@ module.exports = {
   findTodaysScoreForDevice: findTodaysScoreForDevice,
   computeStreakForDevice: computeStreakForDevice,
   saveServerScoreBestEffort: saveServerScoreBestEffort,
+  replayElapsedMs: replayElapsedMs,
+  replayRemainingMs: replayRemainingMs,
+  updateReplayPause: updateReplayPause,
+  expireReplaySession: expireReplaySession,
+  guardReplayTurn: guardReplayTurn,
+  preserveReplayStateOnSessionUpdate: preserveReplayStateOnSessionUpdate,
   runNotaryBestEffort: runNotaryBestEffort,
   getJSONField: getJSONField,
   intOrDefault: intOrDefault,
