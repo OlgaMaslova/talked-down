@@ -877,6 +877,7 @@ body {
 }
 
 .countdown-box {
+  display: none;
   text-align: center;
   font-size: 0.78rem;
   color: var(--text-dim);
