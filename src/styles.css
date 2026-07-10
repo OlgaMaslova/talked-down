@@ -65,9 +65,8 @@ body {
 }
 
 .desktop-topbar,
-.negotiation-status,
-.desktop-section-label,
-.brief-label {
+.desktop-identity,
+.desktop-composer-ask {
   display: none;
 }
 
@@ -1262,32 +1261,36 @@ body {
 
 @media (min-width: 1024px) {
   body {
+    height: 100dvh;
     min-height: 100dvh;
     display: flex;
     flex-direction: column;
     background: #0c0e12;
+    overflow: hidden;
   }
 
   #app {
     flex: 1;
+    height: 100dvh;
     min-height: 0;
-    align-items: center;
-    padding: clamp(1rem, 2vw, 2rem) clamp(1.25rem, 3vw, 3rem) 0;
+    align-items: stretch;
+    padding: 0;
   }
 
   .game {
-    width: min(100%, 1320px);
-    max-width: 1320px;
-    min-height: 640px;
-    height: min(88vh, 900px);
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    height: 100dvh;
+    max-height: none;
     display: grid;
-    grid-template-columns: clamp(250px, 22vw, 300px) minmax(440px, 1fr) clamp(210px, 18vw, 250px);
-    grid-template-rows: 64px minmax(0, 1fr) auto auto;
+    grid-template-columns: clamp(260px, 20vw, 310px) minmax(0, 1fr);
+    grid-template-rows: 76px minmax(0, 1fr) auto auto;
     background: #15181e;
-    border: 1px solid #2b3039;
-    border-radius: 12px;
+    border: 0;
+    border-radius: 0;
     overflow: hidden;
-    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+    box-shadow: none;
   }
 
   .desktop-topbar {
@@ -1297,7 +1300,7 @@ body {
     align-items: center;
     justify-content: space-between;
     min-width: 0;
-    padding: 0 1.35rem;
+    padding: 0 2rem;
     border-bottom: 1px solid #2b3039;
     background: #111419;
   }
@@ -1324,18 +1327,25 @@ body {
     letter-spacing: 0.02em;
   }
 
-  .desktop-day {
-    margin-left: 0.35rem;
+  .desktop-identity {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    margin-left: 0.6rem;
     padding-left: 1rem;
     border-left: 1px solid #303640;
-    color: #89919e;
+    color: #737c88;
+    font-size: 0.72rem;
+  }
+
+  .desktop-identity strong {
+    color: #cfd4db;
     font-size: 0.76rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    font-weight: 650;
   }
 
   .desktop-nav-actions {
-    gap: 0.25rem;
+    gap: 0.75rem;
   }
 
   .desktop-nav-btn {
@@ -1343,9 +1353,10 @@ body {
     border-bottom: 1px solid transparent;
     background: transparent;
     color: #aab1bc;
-    padding: 0.6rem 0.75rem;
+    padding: 0.9rem 1rem;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: 0.95rem;
+    font-weight: 650;
     cursor: pointer;
   }
 
@@ -1376,20 +1387,6 @@ body {
   .game-header .meters,
   .game-header .house-rules {
     display: none;
-  }
-
-  .desktop-section-label,
-  .brief-label {
-    display: block;
-    color: #737c8a;
-    font-size: 0.66rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-
-  .game-header > .desktop-section-label {
-    margin-bottom: 0.8rem;
   }
 
   .badge-row {
@@ -1434,17 +1431,7 @@ body {
     border-bottom: 1px solid #2b3039;
   }
 
-  .character-line::before {
-    content: 'Counterparty';
-    color: #737c8a;
-    font-size: 0.64rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-
   .char-name {
-    margin-top: 0.35rem;
     color: var(--text);
     font-size: 1rem;
   }
@@ -1459,10 +1446,6 @@ body {
     margin-top: 1.4rem;
   }
 
-  .brief-label {
-    margin-bottom: 0.65rem;
-  }
-
   .player-brief {
     margin: 0;
     color: #c4c9d1;
@@ -1471,126 +1454,12 @@ body {
     white-space: pre-line;
   }
 
-  .negotiation-status {
-    grid-column: 3;
-    grid-row: 2 / 5;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    padding: 1.75rem 1.35rem;
-    overflow-y: auto;
-    border-left: 1px solid #2b3039;
-    background: #111419;
-  }
-
-  .status-heading {
-    padding-bottom: 1.25rem;
-  }
-
-  .status-heading strong {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    margin-top: 0.6rem;
-    color: #d7dbe1;
-    font-size: 0.84rem;
-    font-weight: 600;
-  }
-
-  .status-heading strong::before {
-    content: '';
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--accent-2);
-    box-shadow: 0 0 0 3px rgba(79, 209, 197, 0.1);
-  }
-
-  .status-primary {
-    padding: 1.25rem 0 1.4rem;
-    border-top: 1px solid #2b3039;
-    border-bottom: 1px solid #2b3039;
-  }
-
-  .status-primary span,
-  .status-identity span {
-    display: block;
-    margin-bottom: 0.4rem;
-    color: #7f8793;
-    font-size: 0.68rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .status-primary strong {
-    display: block;
-    color: var(--accent);
-    font-size: clamp(1.65rem, 2.2vw, 2.1rem);
-    font-weight: 700;
-    line-height: 1.1;
-    overflow-wrap: anywhere;
-  }
-
-  .status-facts {
-    margin: 0;
-  }
-
-  .status-facts > div {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.9rem 0;
-    border-bottom: 1px solid #252a32;
-  }
-
-  .status-facts dt {
-    color: #7f8793;
-    font-size: 0.72rem;
-  }
-
-  .status-facts dd {
-    margin: 0;
-    color: #e2e5e9;
-    font-size: 0.78rem;
-    font-weight: 650;
-    text-align: right;
-  }
-
-  .status-identity {
-    margin-top: auto;
-    padding-top: 1.5rem;
-  }
-
-  .status-identity strong {
-    color: #dfe3e8;
-    font-size: 0.84rem;
-  }
-
-  .status-guidance {
-    margin: 1.35rem 0 0;
-    color: #737c88;
-    font-size: 0.72rem;
-    line-height: 1.5;
-  }
-
   .chat-log {
     grid-column: 2;
     grid-row: 2;
-    padding: 1.35rem 2rem 0.5rem;
+    padding: 0.85rem 2rem 0.5rem;
     gap: 0;
     background: #171a20;
-  }
-
-  .chat-log::before {
-    content: 'Negotiation transcript';
-    padding-bottom: 0.9rem;
-    border-bottom: 1px solid #2b3039;
-    color: #737c8a;
-    font-size: 0.66rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
   }
 
   .bubble {
@@ -1704,11 +1573,36 @@ body {
     grid-row: 4;
     position: static;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
     gap: 0.55rem;
     padding: 0.85rem 2rem 1.15rem;
     border-top: 0;
     background: #171a20;
+  }
+
+  .desktop-composer-ask {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 9rem;
+    padding-right: 1rem;
+    border-right: 1px solid #343a43;
+  }
+
+  .desktop-composer-ask span {
+    margin-bottom: 0.2rem;
+    color: #7f8793;
+    font-size: 0.62rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .desktop-composer-ask strong {
+    color: var(--accent);
+    font-size: 1.15rem;
+    font-weight: 700;
+    line-height: 1.1;
+    white-space: nowrap;
   }
 
   .input-field {
@@ -1887,15 +1781,15 @@ body {
     border-radius: 10px;
     max-height: 78vh;
   }
+
+  .site-footer {
+    display: none;
+  }
 }
 
 @media (min-width: 1024px) and (max-width: 1199px) {
   .game {
     grid-template-columns: 240px minmax(0, 1fr);
-  }
-
-  .negotiation-status {
-    display: none;
   }
 }
 
