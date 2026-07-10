@@ -65,8 +65,7 @@ body {
 }
 
 .desktop-topbar,
-.desktop-identity,
-.desktop-composer-ask {
+.desktop-identity {
   display: none;
 }
 
@@ -447,6 +446,28 @@ body {
   background: var(--panel-2);
   position: sticky;
   bottom: 0;
+}
+
+.composer-ask {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0 0.2rem 0.1rem;
+}
+
+.composer-ask span {
+  color: var(--text-dim);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.composer-ask strong {
+  color: var(--accent);
+  font-size: 0.95rem;
+  white-space: nowrap;
 }
 
 .input-field {
@@ -1652,16 +1673,19 @@ body {
     background: #171a20;
   }
 
-  .desktop-composer-ask {
+  .composer-ask {
+    grid-column: auto;
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     justify-content: center;
+    gap: 0;
     min-width: 9rem;
     padding-right: 1rem;
     border-right: 1px solid #343a43;
   }
 
-  .desktop-composer-ask span {
+  .composer-ask span {
     margin-bottom: 0.2rem;
     color: #7f8793;
     font-size: 0.62rem;
@@ -1669,7 +1693,7 @@ body {
     text-transform: uppercase;
   }
 
-  .desktop-composer-ask strong {
+  .composer-ask strong {
     color: var(--accent);
     font-size: 1.15rem;
     font-weight: 700;

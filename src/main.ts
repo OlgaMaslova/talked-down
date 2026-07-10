@@ -518,7 +518,6 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
                 : ''
           }
         </div>
-        <h1 class="scenario-title">${escapeHtml(ctx.title)}</h1>
         <div class="character-line">
           <span class="char-name">${escapeHtml(ctx.characterName)}</span>
           <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
@@ -528,36 +527,22 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
             ? `<div class="brief-block"><p class="player-brief">${escapeHtml(ctx.playerBrief)}</p></div>`
             : ''
         }
-        <p class="house-rules">House rules: ${ctx.maxTurns} message${ctx.maxTurns === 1 ? '' : 's'} max, ${ctx.maxMessageChars} characters each.</p>
         <div class="header-buttons" id="mobile-nav-menu">
           <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">Best negotiators</button>
           <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">Past negotiations</button>
         </div>
-        ${
-          ctx.showAsk
-            ? `<div class="meters"><div class="ask-display">
-            <span class="ask-label">Current ask</span>
-            <div class="ask-value" id="ask-value">${formatAsk(initialTurn.state.currentAsk, ctx.currency)}</div>
-          </div></div>`
-            : ''
-          }
       </header>
       <div class="chat-log" id="chat-log"></div>
-      <!-- Opener suggestion chips: docs/session-analysis-2026-07-09.md found 115/145
-           sessions abandoned with a median of 0 player messages (blank-page
-           friction), and that flattery (67%) and logic (50%) openers close the
-           most deals. Chips prefill an editable opener and disappear after the
-           first message. -->
+      <!-- Editable shortcuts lower blank-page friction before the first message. -->
       <div class="opener-chips" id="opener-chips" role="group" aria-label="Suggested openers">
         <span class="opener-chips-label">Not sure how to start?</span>
-        <button type="button" class="opener-chip" data-opener="This is beautiful work — you clearly know your craft. What's your best price for me?">Open with a compliment</button>
         <button type="button" class="opener-chip" data-opener="That price seems high for what this is. Walk me through why it's worth that much?">Question the price</button>
         <button type="button" class="opener-chip" data-opener="I'm interested, but my budget is tight. Could you do a better deal?">Make a modest offer</button>
       </div>
       <form class="input-row" id="input-row">
-        <div class="desktop-composer-ask">
-          <span>${ctx.showAsk ? 'Current ask' : 'Terms'}</span>
-          <strong id="ask-value-desktop">${
+        <div class="composer-ask">
+          <span>${ctx.showAsk ? 'Ask' : 'Terms'}</span>
+          <strong id="ask-value-composer">${
             ctx.showAsk ? formatAsk(initialTurn.state.currentAsk, ctx.currency) : 'Open'
           }</strong>
         </div>
@@ -579,8 +564,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const sendBtn = root.querySelector<HTMLButtonElement>('#send-btn');
   const acceptBtn = root.querySelector<HTMLButtonElement>('#accept-btn');
   const charCounter = root.querySelector<HTMLElement>('#char-counter');
-  const askValue = root.querySelector<HTMLElement>('#ask-value');
-  const askValueDesktop = root.querySelector<HTMLElement>('#ask-value-desktop');
+  const askValueComposer = root.querySelector<HTMLElement>('#ask-value-composer');
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
   const leaderboardBtnHeader = root.querySelector<HTMLButtonElement>('#leaderboard-btn-header');
   const archiveBtnHeader = root.querySelector<HTMLButtonElement>('#archive-btn-header');
@@ -721,8 +705,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
   const applyState = (turn: CharacterTurn): void => {
     lastKnownAsk = turn.state.currentAsk;
-    if (askValue) askValue.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
-    if (askValueDesktop && ctx.showAsk) askValueDesktop.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
+    if (askValueComposer && ctx.showAsk) askValueComposer.textContent = formatAsk(turn.state.currentAsk, ctx.currency);
   };
 
   const renderReplayEndCard = (turn: CharacterTurn): void => {
