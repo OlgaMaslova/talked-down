@@ -4,9 +4,61 @@ routerAdd("GET", "/api/supernaut/ready", function(event) {
   return event.json(200, { ok: true });
 });
 
-// actor.pb.js owns the existing turn route. This global middleware runs before
-// its handler and closes a replay at the server-side time limit, before any LLM
-// work or transcript mutation can happen.
+// actor.pb.js owns session/start. Intercept its already-played response so the
+// client gets the same server-calculated cooldown used by replay/start. Archive
+// starts are intentionally left to actor.pb.js unchanged.
+routerUse(function(e) {
+  if (String(e.request.method || "").toUpperCase() !== "POST" || String(e.request.url.path || "") !== "/api/game/session/start") {
+    return e.next();
+  }
+
+  var body = e.requestInfo().body || {};
+  if (typeof body.day_number !== "undefined" && body.day_number !== null && String(body.day_number) !== "") {
+    return e.next();
+  }
+
+  var deviceId = String(body.device_id || "").slice(0, 64);
+  if (!deviceId) {
+    return e.next();
+  }
+
+  var actorLib = require(__hooks + "/lib/actor.js");
+  // Keep actor.pb.js's no-scenario/no-secret behavior intact before returning
+  // an already-played payload from this middleware.
+  var scenario = actorLib.findTodaysScenario(e.app);
+  if (!scenario) {
+    return e.next();
+  }
+  try {
+    actorLib.findSecretForScenario(e.app, scenario.id);
+  } catch (err) {
+    return e.next();
+  }
+
+  var score = actorLib.findTodaysScoreForDevice(e.app, deviceId);
+  if (!score) {
+    return e.next();
+  }
+
+  return e.json(200, {
+    llm: true,
+    already_played: true,
+    replay_available_at_ms: actorLib.replayAvailableAtMs(e.app, score, deviceId, Date.now()),
+    result: {
+      score: score.getInt("score"),
+      result_label: score.getString("result_label"),
+      outcome: score.getString("outcome"),
+      turns: score.getInt("turns"),
+      percentile: score.getInt("percentile"),
+      day_number: score.getInt("day_number") || actorLib.currentDayNumber(),
+      streak: actorLib.computeStreakForDevice(e.app, deviceId),
+    },
+  });
+});
+
+// actor.pb.js owns the existing turn route. Current replay sessions are
+// cooldown-gated and unranked, not timed. The guard only recognizes historical
+// expired records; it never adds a deadline or pause behavior to new replays.
 routerUse(function(e) {
   if (String(e.request.method || "").toUpperCase() !== "POST" || String(e.request.url.path || "") !== "/api/game/session/turn") {
     return e.next();
@@ -20,24 +72,21 @@ routerUse(function(e) {
   }
 
   try {
-    var guard = actorLib.guardReplayTurn(e.app, sessionToken, Date.now());
+    var guard = actorLib.guardReplayTurn(e.app, sessionToken);
     if (guard && guard.expired) {
       return e.json(410, { error: "replay_expired" });
     }
-    if (guard && guard.paused) {
-      return e.json(409, { error: "replay_paused", remaining_ms: guard.remaining_ms });
-    }
   } catch (err) {
     console.log("replay_turn_guard_failed: " + err.message);
-    return e.json(500, { error: "replay_timing_unavailable" });
+    return e.json(500, { error: "replay_guard_unavailable" });
   }
 
   return e.next();
 });
 
-// actor.pb.js reconstructs normal turn state explicitly. Preserve replay timing
-// fields when that existing handler writes a replay turn so the timing state is
-// never dropped from the otherwise normal session record.
+// actor.pb.js reconstructs normal turn state explicitly. Preserve the replay
+// marker when that handler writes a replay turn, keeping it unranked without
+// carrying any timer or pause fields.
 onRecordUpdate(function(e) {
   var actorLib = require(__hooks + "/lib/actor.js");
   try {
@@ -51,6 +100,24 @@ onRecordUpdate(function(e) {
 routerAdd("POST", "/api/game/replay/start", function(e) {
   var actorLib = require(__hooks + "/lib/actor.js");
   var body = e.requestInfo().body || {};
+  var deviceId = typeof body.device_id === "string" ? body.device_id.trim() : "";
+  if (!deviceId || deviceId.length > 64) {
+    return e.json(400, { error: "device_id_required" });
+  }
+
+  var dailyScore = actorLib.findTodaysScoreForDevice(e.app, deviceId);
+  if (!dailyScore) {
+    return e.json(403, { error: "replay_not_eligible" });
+  }
+
+  var replayAvailableAtMs = actorLib.replayAvailableAtMs(e.app, dailyScore, deviceId, Date.now());
+  if (Date.now() < replayAvailableAtMs) {
+    return e.json(429, {
+      error: "replay_cooldown",
+      replay_available_at_ms: replayAvailableAtMs,
+    });
+  }
+
   var scenario = actorLib.findTodaysScenario(e.app);
   if (!scenario) {
     return e.json(200, { llm: false });
@@ -67,7 +134,7 @@ routerAdd("POST", "/api/game/replay/start", function(e) {
   var created;
   try {
     created = actorLib.newReplaySessionRecord(e.app, scenario, spec, {
-      device_id: body.device_id,
+      device_id: deviceId,
       handle: body.handle,
     });
   } catch (err) {
@@ -79,76 +146,8 @@ routerAdd("POST", "/api/game/replay/start", function(e) {
     llm: true,
     session_token: created.token,
     scenario: actorLib.publicScenarioPayload(scenario, spec, created.state),
-    replay: {
-      duration_ms: actorLib.REPLAY_DURATION_MS,
-      remaining_ms: actorLib.replayRemainingMs(created.state, Date.now()),
-    },
+    replay: { unranked: true },
   });
-});
-
-routerAdd("POST", "/api/game/replay/pause", function(e) {
-  var actorLib = require(__hooks + "/lib/actor.js");
-  var body = e.requestInfo().body || {};
-  var sessionToken = String(body.session_token || "");
-  var action = String(body.action || "");
-
-  if (!sessionToken) {
-    return e.json(404, { error: "session_not_found" });
-  }
-  if (action !== "pause" && action !== "resume") {
-    return e.json(400, { error: "invalid_action" });
-  }
-
-  try {
-    var result = actorLib.updateReplayPause(e.app, sessionToken, action, Date.now());
-    if (result.code === "not_found") {
-      return e.json(404, { error: "session_not_found" });
-    }
-    if (result.code === "not_replay") {
-      return e.json(409, { error: "session_not_replay" });
-    }
-    if (result.code === "expired") {
-      return e.json(410, { error: "replay_expired" });
-    }
-    if (result.code === "not_active") {
-      return e.json(409, { error: "session_not_active" });
-    }
-    return e.json(200, { paused: !!result.paused, remaining_ms: result.remaining_ms });
-  } catch (err) {
-    console.log("replay_pause_failed: " + err.message);
-    return e.json(500, { error: "replay_pause_unavailable" });
-  }
-});
-
-routerAdd("POST", "/api/game/replay/expire", function(e) {
-  var actorLib = require(__hooks + "/lib/actor.js");
-  var body = e.requestInfo().body || {};
-  var sessionToken = String(body.session_token || "");
-
-  if (!sessionToken) {
-    return e.json(404, { error: "session_not_found" });
-  }
-
-  try {
-    var result = actorLib.expireReplaySession(e.app, sessionToken, Date.now());
-    if (result.code === "not_found") {
-      return e.json(404, { error: "session_not_found" });
-    }
-    if (result.code === "not_replay") {
-      return e.json(409, { error: "session_not_replay" });
-    }
-    if (result.code === "not_active") {
-      return e.json(409, { error: "session_not_active" });
-    }
-    return e.json(200, {
-      expired: true,
-      elapsed_ms: result.elapsed_ms,
-      remaining_ms: 0,
-    });
-  } catch (err) {
-    console.log("replay_expire_failed: " + err.message);
-    return e.json(500, { error: "replay_expire_unavailable" });
-  }
 });
 
 routerAdd("GET", "/api/game/percentile", function(event) {

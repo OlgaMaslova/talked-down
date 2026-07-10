@@ -162,64 +162,6 @@ body {
   border-radius: 999px;
 }
 
-.replay-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.65rem;
-  margin-top: 0.65rem;
-  padding: 0.55rem 0.6rem 0.55rem 0.7rem;
-  background: rgba(79, 209, 197, 0.08);
-  border: 1px solid rgba(79, 209, 197, 0.42);
-  border-radius: 12px;
-}
-
-.replay-time {
-  display: flex;
-  align-items: baseline;
-  gap: 0.45rem;
-  min-width: 0;
-}
-
-.replay-time-label {
-  color: var(--text-dim);
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.replay-countdown {
-  color: var(--accent-2);
-  font-size: 1.1rem;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.03em;
-}
-
-.replay-pause-btn {
-  flex: 0 0 auto;
-  border: 1px solid var(--accent-2);
-  background: transparent;
-  color: var(--accent-2);
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 800;
-  border-radius: 999px;
-  padding: 0.4rem 0.65rem;
-  cursor: pointer;
-}
-
-.replay-pause-btn:hover:not(:disabled),
-.replay-pause-btn:focus-visible {
-  background: var(--accent-2);
-  color: #06231f;
-}
-
-.replay-pause-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .header-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -717,9 +659,20 @@ body {
 }
 
 .copy-btn,
-.replay-btn,
 .countdown {
   flex: 1;
+}
+
+.replay-action {
+  flex: 1 1 10rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.replay-action .replay-btn {
+  width: 100%;
 }
 
 .copy-btn {
@@ -748,10 +701,32 @@ body {
   cursor: pointer;
 }
 
-.replay-btn:hover,
-.replay-btn:focus-visible {
+.replay-btn:hover:not(:disabled),
+.replay-btn:focus-visible:not(:disabled) {
   background: var(--accent);
   color: #221a08;
+}
+
+.replay-btn:disabled {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.replay-status {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.replay-cooldown {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .replay-end-card {

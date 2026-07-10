@@ -26,7 +26,9 @@ Expected scenario_secrets.secret_spec shape:
 // server-side and surfaced to the player as a house rule (keeps per-session
 // LLM cost bounded).
 var MAX_MESSAGE_CHARS = 280;
-var REPLAY_DURATION_MS = 180000;
+// Replays are unranked and have no in-session deadline. This delay applies
+// between a completed ranked game/replay and the next replay start.
+var REPLAY_COOLDOWN_MS = 180000;
 
 function todayUTC() {
   return new Date().toISOString().slice(0, 10);
@@ -196,14 +198,9 @@ function newSessionRecord(app, scenario, spec, identity) {
     state.archive_day = intOrDefault(identity.archive_day, 0);
   }
   if (identity.replay) {
-    // Replay timing is entirely server-owned. The browser receives remaining
-    // time but never supplies a clock value accepted by the server.
+    // Replay sessions are marked solely so the ordinary turn pipeline keeps
+    // them unranked. They have no timer or pause state.
     state.replay = true;
-    state.replay_started_at_ms = intOrDefault(identity.replay_started_at_ms, Date.now());
-    state.replay_paused = false;
-    state.replay_paused_at_ms = null;
-    state.replay_pause_total_ms = 0;
-    state.replay_pause_count = 0;
   }
 
   record.set("scenario", scenario.id);
@@ -836,44 +833,50 @@ function computeStreakForDevice(app, deviceId) {
   }
 }
 
-function replayNonNegativeInt(value, fallback) {
-  var n = Number(value);
-  if (isNaN(n) || !isFinite(n) || n < 0) {
-    return fallback;
-  }
-  return Math.floor(n);
-}
-
 function isReplayState(state) {
   return !!(state && state.replay);
 }
 
-function replayIsPaused(state) {
-  return !!(state && state.replay_paused && replayNonNegativeInt(state.replay_paused_at_ms, 0) > 0);
-}
-
-function replayElapsedMs(state, nowMs) {
-  state = state || {};
-  var startedAt = replayNonNegativeInt(state.replay_started_at_ms, 0);
-  if (!startedAt) {
+function recordTimestampMs(record, fieldName) {
+  if (!record) {
     return 0;
   }
-  var now = replayNonNegativeInt(nowMs, Date.now());
-  var pauseTotal = replayNonNegativeInt(state.replay_pause_total_ms, 0);
-  var elapsed = now - startedAt - pauseTotal;
-  if (replayIsPaused(state)) {
-    elapsed -= Math.max(0, now - replayNonNegativeInt(state.replay_paused_at_ms, now));
+
+  var value = null;
+  try {
+    value = record.getString(fieldName);
+  } catch (stringErr) {}
+  if (!value) {
+    try {
+      value = record.get(fieldName);
+    } catch (valueErr) {}
   }
-  return Math.max(0, Math.floor(elapsed));
+  if (value && typeof value.getTime === "function") {
+    var dateMs = value.getTime();
+    return isNaN(dateMs) ? 0 : dateMs;
+  }
+
+  var text = String(value || "").trim();
+  if (!text) {
+    return 0;
+  }
+  // PocketBase autodate values are UTC. Add the UTC designator to the
+  // database's space-separated form before parsing in JavaScript.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)) {
+    text = text.replace(" ", "T") + "Z";
+  }
+  var ms = Date.parse(text);
+  return isNaN(ms) ? 0 : ms;
 }
 
-function replayRemainingMs(state, nowMs) {
-  return Math.max(0, REPLAY_DURATION_MS - replayElapsedMs(state, nowMs));
-}
-
-function replayPauseEvents(metrics) {
-  var events = getJSONField(metrics, "pause_events", []);
-  return Array.isArray(events) ? events : [];
+function replayAvailabilityFromDailyScore(scoreRecord, nowMs) {
+  var createdAtMs = recordTimestampMs(scoreRecord, "created");
+  if (createdAtMs > 0) {
+    return createdAtMs + REPLAY_COOLDOWN_MS;
+  }
+  // A score should always have `created`; if a malformed legacy record lacks
+  // it, fail closed for one cooldown rather than accidentally opening replay.
+  return Math.max(0, Number(nowMs) || Date.now()) + REPLAY_COOLDOWN_MS;
 }
 
 function findReplayMetricsRecord(app, sessionToken) {
@@ -884,52 +887,55 @@ function findReplayMetricsRecord(app, sessionToken) {
   }
 }
 
-function applyReplayMetrics(metrics, status, state, events, elapsedMs) {
-  metrics.set("status", status);
-  metrics.set("pause_count", replayNonNegativeInt(state.replay_pause_count, 0));
-  metrics.set("pause_total_ms", replayNonNegativeInt(state.replay_pause_total_ms, 0));
-  metrics.set("pause_events", JSON.stringify(events || []));
-  metrics.set("elapsed_ms", replayNonNegativeInt(elapsedMs, 0));
+function findLatestCompletedReplayMetricsForDevice(app, deviceId) {
+  deviceId = String(deviceId || "").trim();
+  if (!deviceId || deviceId.length > 64) {
+    return null;
+  }
+
+  try {
+    var records = app.findRecordsByFilter(
+      "replay_metrics",
+      "device_id = {:device} && day_number = {:day} && status = {:status}",
+      "-updated",
+      1,
+      0,
+      { device: deviceId, day: currentDayNumber(), status: "completed" }
+    );
+    return records && records.length ? records[0] : null;
+  } catch (err) {
+    return null;
+  }
 }
 
-function finalizeReplayPause(state, events, nowMs, terminal) {
-  if (!replayIsPaused(state)) {
-    return;
+// The next replay opens after the later of today's ranked score creation and
+// the most recently completed replay. `updated` is written when completion is
+// durably recorded, so it is the authoritative replay-completion timestamp.
+function replayAvailableAtMs(app, dailyScore, deviceId, nowMs) {
+  if (!dailyScore) {
+    return null;
   }
 
-  var pausedAt = replayNonNegativeInt(state.replay_paused_at_ms, nowMs);
-  var duration = Math.max(0, replayNonNegativeInt(nowMs, Date.now()) - pausedAt);
-  state.replay_pause_total_ms = replayNonNegativeInt(state.replay_pause_total_ms, 0) + duration;
-  state.replay_paused = false;
-  state.replay_paused_at_ms = null;
+  var now = Math.max(0, Number(nowMs) || Date.now());
+  var availableAtMs = replayAvailabilityFromDailyScore(dailyScore, now);
+  var latestReplay = findLatestCompletedReplayMetricsForDevice(app, deviceId);
+  if (!latestReplay) {
+    return availableAtMs;
+  }
 
-  var event = null;
-  for (var i = events.length - 1; i >= 0; i--) {
-    if (events[i] && (events[i].resumed_at_ms === null || typeof events[i].resumed_at_ms === "undefined") &&
-        (events[i].ended_at_ms === null || typeof events[i].ended_at_ms === "undefined")) {
-      event = events[i];
-      break;
-    }
-  }
-  if (!event) {
-    event = {
-      paused_at_ms: pausedAt,
-      active_elapsed_ms: replayElapsedMs(state, pausedAt),
-    };
-    events.push(event);
-  }
-  event.duration_ms = duration;
-  if (terminal === "resumed") {
-    event.resumed_at_ms = nowMs;
+  var replayCompletedAtMs = recordTimestampMs(latestReplay, "updated");
+  if (replayCompletedAtMs > 0) {
+    availableAtMs = Math.max(availableAtMs, replayCompletedAtMs + REPLAY_COOLDOWN_MS);
   } else {
-    event.ended_at_ms = nowMs;
+    // A corrupt completion timestamp must not bypass the server cooldown.
+    availableAtMs = Math.max(availableAtMs, now + REPLAY_COOLDOWN_MS);
   }
+  return availableAtMs;
 }
 
 function newReplaySessionRecord(app, scenario, spec, identity) {
   identity = identity || {};
   identity.replay = true;
-  identity.replay_started_at_ms = Date.now();
 
   var created;
   app.runInTransaction(function(txApp) {
@@ -941,152 +947,15 @@ function newReplaySessionRecord(app, scenario, spec, identity) {
     metrics.set("day_number", currentDayNumber());
     metrics.set("scenario", scenario.id);
     metrics.set("status", "active");
-    metrics.set("pause_count", 0);
-    metrics.set("pause_total_ms", 0);
-    metrics.set("pause_events", "[]");
-    metrics.set("elapsed_ms", 0);
     txApp.save(metrics);
   });
 
   return created;
 }
 
-function expireReplaySessionInTransaction(app, session, state, metrics, nowMs) {
-  var events = replayPauseEvents(metrics);
-  if (replayIsPaused(state)) {
-    finalizeReplayPause(state, events, nowMs, "expired");
-  }
-  var elapsed = replayElapsedMs(state, nowMs);
-  state.replay_expired_at_ms = nowMs;
-  session.set("state", JSON.stringify(state));
-  session.set("status", "expired");
-  applyReplayMetrics(metrics, "expired", state, events, elapsed);
-  app.save(session);
-  app.save(metrics);
-  return elapsed;
-}
-
-function expireReplaySession(app, sessionToken, nowMs) {
-  var result = { code: "not_found", elapsed_ms: 0 };
-  app.runInTransaction(function(txApp) {
-    var session;
-    try {
-      session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
-    } catch (err) {
-      return;
-    }
-    var state = getJSONField(session, "state", {});
-    if (!isReplayState(state)) {
-      result.code = "not_replay";
-      return;
-    }
-    if (session.getString("status") === "expired") {
-      result.code = "expired";
-      result.elapsed_ms = replayElapsedMs(state, nowMs);
-      return;
-    }
-    if (session.getString("status") !== "active") {
-      result.code = "not_active";
-      return;
-    }
-    var metrics = findReplayMetricsRecord(txApp, sessionToken);
-    if (!metrics) {
-      throw new Error("replay_metrics_not_found");
-    }
-    result.code = "expired";
-    result.elapsed_ms = expireReplaySessionInTransaction(txApp, session, state, metrics, nowMs);
-  });
-  return result;
-}
-
-function updateReplayPause(app, sessionToken, action, nowMs) {
-  var result = { code: "not_found", paused: false, remaining_ms: 0 };
-  app.runInTransaction(function(txApp) {
-    var session;
-    try {
-      session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
-    } catch (err) {
-      return;
-    }
-    var state = getJSONField(session, "state", {});
-    if (!isReplayState(state)) {
-      result.code = "not_replay";
-      return;
-    }
-    if (session.getString("status") === "expired") {
-      result.code = "expired";
-      return;
-    }
-    if (session.getString("status") !== "active") {
-      result.code = "not_active";
-      return;
-    }
-
-    var metrics = findReplayMetricsRecord(txApp, sessionToken);
-    if (!metrics) {
-      throw new Error("replay_metrics_not_found");
-    }
-    var elapsed = replayElapsedMs(state, nowMs);
-    if (elapsed >= REPLAY_DURATION_MS) {
-      expireReplaySessionInTransaction(txApp, session, state, metrics, nowMs);
-      result.code = "expired";
-      return;
-    }
-
-    var events = replayPauseEvents(metrics);
-    if (action === "pause" && !replayIsPaused(state)) {
-      state.replay_paused = true;
-      state.replay_paused_at_ms = nowMs;
-      state.replay_pause_count = replayNonNegativeInt(state.replay_pause_count, 0) + 1;
-      events.push({
-        paused_at_ms: nowMs,
-        active_elapsed_ms: elapsed,
-        resumed_at_ms: null,
-        duration_ms: null,
-      });
-    } else if (action === "resume" && replayIsPaused(state)) {
-      finalizeReplayPause(state, events, nowMs, "resumed");
-      elapsed = replayElapsedMs(state, nowMs);
-    }
-
-    session.set("state", JSON.stringify(state));
-    applyReplayMetrics(metrics, replayIsPaused(state) ? "paused" : "active", state, events, elapsed);
-    txApp.save(session);
-    txApp.save(metrics);
-    result.code = "ok";
-    result.paused = replayIsPaused(state);
-    result.remaining_ms = replayRemainingMs(state, nowMs);
-  });
-  return result;
-}
-
-function guardReplayTurn(app, sessionToken, nowMs) {
-  var session;
-  try {
-    session = app.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
-  } catch (err) {
-    return { replay: false };
-  }
-  var state = getJSONField(session, "state", {});
-  if (!isReplayState(state)) {
-    return { replay: false };
-  }
-  if (session.getString("status") === "expired") {
-    return { replay: true, expired: true };
-  }
-  if (session.getString("status") !== "active") {
-    return { replay: true, inactive: true };
-  }
-  if (replayIsPaused(state)) {
-    return { replay: true, paused: true, remaining_ms: replayRemainingMs(state, nowMs) };
-  }
-  if (replayElapsedMs(state, nowMs) >= REPLAY_DURATION_MS) {
-    expireReplaySession(app, sessionToken, nowMs);
-    return { replay: true, expired: true };
-  }
-  return { replay: true, remaining_ms: replayRemainingMs(state, nowMs) };
-}
-
+// The legacy turn handler reconstructs state on every turn. Preserve only the
+// replay marker so its completion continues through unranked score suppression;
+// there is deliberately no replay clock or pause state to preserve.
 function preserveReplayStateOnSessionUpdate(app, sessionRecord) {
   var nextState = getJSONField(sessionRecord, "state", {});
   if (isReplayState(nextState)) {
@@ -1103,58 +972,49 @@ function preserveReplayStateOnSessionUpdate(app, sessionRecord) {
     return false;
   }
 
-  var replayKeys = [
-    "replay",
-    "replay_started_at_ms",
-    "replay_paused",
-    "replay_paused_at_ms",
-    "replay_pause_total_ms",
-    "replay_pause_count",
-    "replay_expired_at_ms",
-  ];
-  for (var i = 0; i < replayKeys.length; i++) {
-    var key = replayKeys[i];
-    if (typeof originalState[key] !== "undefined") {
-      nextState[key] = originalState[key];
-    }
-  }
+  nextState.replay = true;
   sessionRecord.set("state", JSON.stringify(nextState));
   return true;
+}
+
+// This guard retains the terminal response for historical expired records, but
+// it never applies a deadline or pause state to a current replay session.
+function guardReplayTurn(app, sessionToken) {
+  var session;
+  try {
+    session = app.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
+  } catch (err) {
+    return { replay: false };
+  }
+  var state = getJSONField(session, "state", {});
+  if (!isReplayState(state)) {
+    return { replay: false };
+  }
+  if (session.getString("status") === "expired") {
+    return { replay: true, expired: true };
+  }
+  if (session.getString("status") !== "active") {
+    return { replay: true, inactive: true };
+  }
+  return { replay: true };
 }
 
 function completeReplayMetricsBestEffort(app, sessionToken) {
   try {
     var completed = false;
     app.runInTransaction(function(txApp) {
-      var session;
-      try {
-        session = txApp.findFirstRecordByData("sessions", "token", String(sessionToken || ""));
-      } catch (missingSession) {
-        return;
-      }
       var metrics = findReplayMetricsRecord(txApp, sessionToken);
-      var state = getJSONField(session, "state", {});
       if (!metrics) {
         return;
       }
-      if (metrics.getString("status") === "expired") {
+      if (metrics.getString("status") === "completed") {
         completed = true;
         return;
       }
 
-      var nowMs = Date.now();
-      var events = replayPauseEvents(metrics);
-      var stateChanged = false;
-      if (replayIsPaused(state)) {
-        finalizeReplayPause(state, events, nowMs, "completed");
-        stateChanged = true;
-      }
-      var elapsed = replayElapsedMs(state, nowMs);
-      applyReplayMetrics(metrics, "completed", state, events, elapsed);
-      if (stateChanged) {
-        session.set("state", JSON.stringify(state));
-        txApp.save(session);
-      }
+      // Saving this terminal status advances replay_metrics.updated. That
+      // timestamp is used to enforce the cooldown before another replay.
+      metrics.set("status", "completed");
       txApp.save(metrics);
       completed = true;
     });
@@ -1275,7 +1135,7 @@ function runNotaryBestEffort(sessionRecord, transcript) {
 
 module.exports = {
   MAX_MESSAGE_CHARS: MAX_MESSAGE_CHARS,
-  REPLAY_DURATION_MS: REPLAY_DURATION_MS,
+  REPLAY_COOLDOWN_MS: REPLAY_COOLDOWN_MS,
   findTodaysScenario: findTodaysScenario,
   findSecretForScenario: findSecretForScenario,
   playerStatedPrice: playerStatedPrice,
@@ -1301,11 +1161,11 @@ module.exports = {
   findArchiveScenario: findArchiveScenario,
   findTodaysScoreForDevice: findTodaysScoreForDevice,
   computeStreakForDevice: computeStreakForDevice,
+  recordTimestampMs: recordTimestampMs,
+  replayAvailabilityFromDailyScore: replayAvailabilityFromDailyScore,
+  findLatestCompletedReplayMetricsForDevice: findLatestCompletedReplayMetricsForDevice,
+  replayAvailableAtMs: replayAvailableAtMs,
   saveServerScoreBestEffort: saveServerScoreBestEffort,
-  replayElapsedMs: replayElapsedMs,
-  replayRemainingMs: replayRemainingMs,
-  updateReplayPause: updateReplayPause,
-  expireReplaySession: expireReplaySession,
   guardReplayTurn: guardReplayTurn,
   preserveReplayStateOnSessionUpdate: preserveReplayStateOnSessionUpdate,
   runNotaryBestEffort: runNotaryBestEffort,
