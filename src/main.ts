@@ -326,7 +326,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 // result-card countdowns in one place so no replaced view keeps ticking.
 let activeViewportCleanup: (() => void) | null = null;
 const activeResultCountdowns = new Set<number>();
-const REPLAY_COOLDOWN_MS = 3 * 60 * 1000;
+const REPLAY_COOLDOWN_MS = 60 * 1000;
 
 function clearGameRuntime(): void {
   activeViewportCleanup?.();
@@ -343,8 +343,8 @@ function formatReplayCooldown(remainingMs: number): string {
 function replayCooldownActionHtml(): string {
   return `
     <div class="replay-action">
-      <button class="replay-btn" id="replay-btn" type="button" disabled aria-describedby="replay-status">↻ Replay in 03:00</button>
-      <p class="replay-status" id="replay-status">Replay available in <span class="replay-cooldown" id="replay-cooldown" role="timer" aria-live="off">03:00</span></p>
+      <button class="replay-btn" id="replay-btn" type="button" disabled aria-describedby="replay-status">↻ Replay in 01:00</button>
+      <p class="replay-status" id="replay-status">Replay available in <span class="replay-cooldown" id="replay-cooldown" role="timer" aria-live="off">01:00</span></p>
     </div>
   `;
 }

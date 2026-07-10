@@ -28,7 +28,7 @@ Expected scenario_secrets.secret_spec shape:
 var MAX_MESSAGE_CHARS = 280;
 // Replays are unranked and have no in-session deadline. This delay applies
 // between a completed ranked game/replay and the next replay start.
-var REPLAY_COOLDOWN_MS = 180000;
+var REPLAY_COOLDOWN_MS = 60000;
 
 function todayUTC() {
   return new Date().toISOString().slice(0, 10);

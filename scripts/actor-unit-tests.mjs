@@ -169,10 +169,10 @@ check("null lever rejected", actor.validateLeverHit(spec, { levers_used: [] }, n
     getString(name) { return name === "created" ? "2026-07-10 12:00:00.000Z" : ""; },
     get(name) { return name === "created" ? "2026-07-10 12:00:00.000Z" : null; },
   };
-  check("replay cooldown is exactly three minutes", actor.REPLAY_COOLDOWN_MS === 180000, actor.REPLAY_COOLDOWN_MS);
+  check("replay cooldown is exactly one minute", actor.REPLAY_COOLDOWN_MS === 60000, actor.REPLAY_COOLDOWN_MS);
   check(
-    "ranked completion blocks replay start for three minutes",
-    actor.replayAvailabilityFromDailyScore(score, completedAt) === completedAt + 180000,
+    "ranked completion blocks replay start for one minute",
+    actor.replayAvailabilityFromDailyScore(score, completedAt) === completedAt + 60000,
     actor.replayAvailabilityFromDailyScore(score, completedAt),
   );
 }
@@ -189,8 +189,8 @@ check("null lever rejected", actor.validateLeverHit(spec, { levers_used: [] }, n
     findRecordsByFilter() { return [replayMetrics]; },
   };
   check(
-    "replay completion starts a fresh three-minute cooldown",
-    actor.replayAvailableAtMs(app, dailyScore, "device-1", Date.UTC(2026, 6, 10, 12, 10, 30)) === Date.UTC(2026, 6, 10, 12, 13, 0),
+    "replay completion starts a fresh one-minute cooldown",
+    actor.replayAvailableAtMs(app, dailyScore, "device-1", Date.UTC(2026, 6, 10, 12, 10, 30)) === Date.UTC(2026, 6, 10, 12, 11, 0),
   );
 }
 {

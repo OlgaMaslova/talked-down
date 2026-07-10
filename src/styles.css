@@ -406,7 +406,7 @@ body {
   background: var(--panel);
   color: var(--text);
   border-radius: 999px;
-  padding: 0.6rem 3.4rem 0.6rem 0.95rem;
+  padding: 0.6rem 4.5rem 0.6rem 0.95rem;
   font-size: 0.95rem;
   outline: none;
 }
@@ -426,6 +426,8 @@ body {
   color: var(--text-dim);
   pointer-events: none;
   font-variant-numeric: tabular-nums;
+  min-width: 3.8rem;
+  text-align: right;
 }
 
 .char-counter.warning {
@@ -1351,7 +1353,7 @@ body {
 
   #chat-input {
     font-size: 1rem;
-    padding: 0.7rem 1.1rem;
+    padding: 0.7rem 4.5rem 0.7rem 1.1rem;
   }
 
   .end-panel {
