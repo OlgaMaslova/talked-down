@@ -126,6 +126,35 @@ try {
 }
 check("new, truthful domain passes validation", validResult && validResult.secret && validResult.secret.domain === "sports", validResult);
 
+const directYouScenario = JSON.parse(JSON.stringify(validSportsScenario));
+directYouScenario.public.opening_message = "You have shown strong results, but I can offer 200 crowns. Tell me why it is worth more.";
+let directYouResult = null;
+try {
+  directYouResult = playwright.normalizeAndValidateGenerated(directYouScenario, recent);
+} catch (error) {
+  directYouResult = error.message;
+}
+check("direct dialogue beginning with You is allowed", directYouResult && directYouResult.secret, directYouResult);
+
+const narratedScenario = JSON.parse(JSON.stringify(validSportsScenario));
+narratedScenario.public.opening_message = "You stand before the coach at the stadium as the negotiation begins.";
+let narrationError = "";
+try {
+  playwright.normalizeAndValidateGenerated(narratedScenario, recent);
+} catch (error) {
+  narrationError = error.message;
+}
+check("actual second-person scene narration is rejected", narrationError.includes("public.opening_message contains narration"), narrationError);
+
+const judgeMessages = playwright.buildDiversityJudgeMessages(recent, [validSportsScenario, validSportsScenario]);
+check("diversity judge supports a two-candidate subset", judgeMessages[0].content.includes("0 through 1"), judgeMessages[0].content);
+
+const onlyCandidate = { marker: "only-valid-candidate" };
+const selectedOnly = playwright.selectDiverseScenarioCandidate({
+  logger() { return { info() {}, error() {} }; },
+}, "2026-07-12", 1, recent, [onlyCandidate]);
+check("a cycle can continue with one valid candidate", selectedOnly === onlyCandidate, selectedOnly);
+
 const repeatedDomainScenario = JSON.parse(JSON.stringify(validSportsScenario));
 repeatedDomainScenario.secret.domain = "industrial_transport";
 repeatedDomainScenario.public.title = "Cargo Mechanic Training Contract";

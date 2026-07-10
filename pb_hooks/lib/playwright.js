@@ -465,7 +465,9 @@ function normalizeAndValidateGenerated(raw, recent) {
   }
   if (pub.opening_message.length > 1000) { errors.push("public.opening_message too long"); }
   if (/["\u201C\u201D]/.test(pub.opening_message)) { errors.push("public.opening_message must be raw first-person speech with no quotation marks or narration"); }
-  if (/^you\b/i.test(pub.opening_message) || /\b(he|she|they)\s+(says?|states?|replies|asks?|mutters?|declares?)\b/i.test(pub.opening_message)) { errors.push("public.opening_message contains narration; it must be only the character's spoken words"); }
+  var startsWithSceneNarration = /^you\s+(stand|enter|approach|arrive|find|see|face|walk|step|sit|look|notice|are\s+standing|are\s+seated|are\s+greeted)\b/i.test(pub.opening_message);
+  var containsThirdPersonSpeechTag = /\b(he|she|they)\s+(says?|states?|replies|asks?|mutters?|declares?)\b/i.test(pub.opening_message);
+  if (startsWithSceneNarration || containsThirdPersonSpeechTag) { errors.push("public.opening_message contains narration; it must be only the character's spoken words"); }
   if (pub.character_name && pub.opening_message.toLowerCase().indexOf(pub.character_name.toLowerCase()) !== -1) { errors.push("public.opening_message mentions the character's own name; it must be first-person speech only"); }
   if (!pub.player_brief) { errors.push("public.player_brief required"); }
   if (pub.player_brief.length > 320) { errors.push("public.player_brief too long; must be terse (opponent sentence + 'You are...' + 'Goal:' lines)"); }
@@ -629,11 +631,13 @@ function normalizeAndValidateGenerated(raw, recent) {
 }
 
 function buildDiversityJudgeMessages(recent, candidates) {
+  var candidateCount = candidates ? candidates.length : 0;
+  var maxIndex = Math.max(0, candidateCount - 1);
   var system = [
     "You are the DIVERSITY JUDGE for a daily fictional negotiation game.",
-    "You receive the complete five most recent generated scenarios and three complete, server-validated candidate scenarios.",
+    "You receive the complete five most recent generated scenarios and " + candidateCount + " complete, server-validated candidate scenario(s).",
     "Return JSON only with exactly this shape: {\"candidate_index\":0,\"reason\":\"short reason\"}.",
-    "Choose exactly one candidate_index from 0, 1, or 2. Choose the candidate that is most meaningfully distinct from the recent scenarios while still clearly playable.",
+    "Choose exactly one candidate_index from 0 through " + maxIndex + ". Choose the candidate that is most meaningfully distinct from the recent scenarios while still clearly playable.",
     "Judge meaningful distinction by setting/domain, protagonist and neutral persona, activity or negotiation premise, and opening situation. Do not prefer shallow wording changes when the underlying scenario is substantially similar.",
     "All candidates already passed server validation. Give one short reason for your selection."
   ].join("\n");
@@ -649,8 +653,12 @@ function buildDiversityJudgeMessages(recent, candidates) {
 
 function selectDiverseScenarioCandidate(app, targetDate, cycle, recent, candidates) {
   try {
-    if (!candidates || candidates.length !== CANDIDATES_PER_CYCLE) {
-      throw new Error("diversity judge requires exactly " + CANDIDATES_PER_CYCLE + " candidates");
+    if (!candidates || candidates.length < 1) {
+      throw new Error("diversity judge requires at least one valid candidate");
+    }
+    if (candidates.length === 1) {
+      logInfo(app, "nightly_playwright using the only valid candidate for " + targetDate + " (cycle " + cycle + ")");
+      return candidates[0];
     }
     var judge = openai.chatJSON(
       buildDiversityJudgeMessages(recent, candidates),
@@ -692,10 +700,10 @@ function generateScenarioWithRetries(app, targetDate, cycle) {
       logError(app, "nightly_playwright generation invalid for " + targetDate + " (cycle " + cycle + ", candidate " + candidateNumber + "): " + err.message);
     }
   }
-  if (candidates.length !== CANDIDATES_PER_CYCLE) {
-    throw new Error(errors.join(" | ") || "did not produce three valid candidates");
+  if (!candidates.length) {
+    throw new Error(errors.join(" | ") || "did not produce a valid candidate");
   }
-  logInfo(app, "nightly_playwright generated " + CANDIDATES_PER_CYCLE + " valid candidates for " + targetDate + " (cycle " + cycle + ")");
+  logInfo(app, "nightly_playwright generated " + candidates.length + " valid candidate(s) out of " + CANDIDATES_PER_CYCLE + " for " + targetDate + " (cycle " + cycle + ")");
   return selectDiverseScenarioCandidate(app, targetDate, cycle, recent, candidates);
 }
 
@@ -1347,6 +1355,8 @@ module.exports = {
     classifiedDomainKeys: classifiedDomainKeys,
     recentDomainKeys: recentDomainKeys,
     buildGenerationMessages: buildGenerationMessages,
-    normalizeAndValidateGenerated: normalizeAndValidateGenerated
+    normalizeAndValidateGenerated: normalizeAndValidateGenerated,
+    buildDiversityJudgeMessages: buildDiversityJudgeMessages,
+    selectDiverseScenarioCandidate: selectDiverseScenarioCandidate
   }
 };
