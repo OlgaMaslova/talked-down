@@ -346,7 +346,7 @@ function replayCooldownActionHtml(): string {
   return `
     <div class="replay-action">
       <button class="replay-btn" id="replay-btn" type="button" disabled aria-describedby="replay-status">↻ Replay in 01:00</button>
-      <p class="replay-status" id="replay-status">Replay available in <span class="replay-cooldown" id="replay-cooldown" role="timer" aria-live="off">01:00</span></p>
+      <p class="replay-status sr-only" id="replay-status" role="status" aria-live="off">Replay available in 01:00</p>
     </div>
   `;
 }
@@ -355,7 +355,6 @@ function replayCooldownActionHtml(): string {
 function startReplayCooldown(
   button: HTMLButtonElement,
   status: HTMLElement,
-  countdown: HTMLElement,
   replayAvailableAtMs: number,
 ): void {
   let interval: number | null = null;
@@ -367,7 +366,7 @@ function startReplayCooldown(
     }
   };
   const update = (): void => {
-    if (!button.isConnected || !status.isConnected || !countdown.isConnected) {
+    if (!button.isConnected || !status.isConnected) {
       stop();
       return;
     }
@@ -385,7 +384,7 @@ function startReplayCooldown(
     const formatted = formatReplayCooldown(remainingMs);
     button.disabled = true;
     button.textContent = `↻ Replay in ${formatted}`;
-    countdown.textContent = formatted;
+    status.textContent = `Replay available in ${formatted}`;
   };
 
   update();
@@ -747,9 +746,8 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
     const replayBtn = endPanel.querySelector<HTMLButtonElement>('#replay-btn');
     const replayStatus = endPanel.querySelector<HTMLElement>('#replay-status');
-    const replayCooldown = endPanel.querySelector<HTMLElement>('#replay-cooldown');
-    if (replayBtn && replayStatus && replayCooldown) {
-      startReplayCooldown(replayBtn, replayStatus, replayCooldown, replayAvailableAtMs);
+    if (replayBtn && replayStatus) {
+      startReplayCooldown(replayBtn, replayStatus, replayAvailableAtMs);
       replayBtn.addEventListener('click', () => {
         void startReplay(root, ctx.identity);
       });
@@ -852,9 +850,8 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
 
     const replayBtn = endPanel.querySelector<HTMLButtonElement>('#replay-btn');
     const replayStatus = endPanel.querySelector<HTMLElement>('#replay-status');
-    const replayCooldown = endPanel.querySelector<HTMLElement>('#replay-cooldown');
-    if (replayBtn && replayStatus && replayCooldown) {
-      startReplayCooldown(replayBtn, replayStatus, replayCooldown, replayAvailableAtMs);
+    if (replayBtn && replayStatus) {
+      startReplayCooldown(replayBtn, replayStatus, replayAvailableAtMs);
       replayBtn.addEventListener('click', () => {
         void startReplay(root, ctx.identity);
       });
@@ -1190,9 +1187,8 @@ function renderAlreadyPlayed(
 
   const replayBtn = root.querySelector<HTMLButtonElement>('#replay-btn');
   const replayStatus = root.querySelector<HTMLElement>('#replay-status');
-  const replayCooldown = root.querySelector<HTMLElement>('#replay-cooldown');
-  if (replayBtn && replayStatus && replayCooldown) {
-    startReplayCooldown(replayBtn, replayStatus, replayCooldown, resolvedReplayAvailableAtMs);
+  if (replayBtn && replayStatus) {
+    startReplayCooldown(replayBtn, replayStatus, resolvedReplayAvailableAtMs);
     replayBtn.addEventListener('click', () => {
       void startReplay(root, identity);
     });

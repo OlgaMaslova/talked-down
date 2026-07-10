@@ -834,18 +834,18 @@ body {
   opacity: 0.8;
 }
 
-.replay-status {
-  margin: 0;
-  color: var(--text-dim);
-  font-size: 0.74rem;
-  line-height: 1.2;
-  text-align: center;
-}
-
-.replay-cooldown {
-  color: var(--text);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+/* Visually hidden but available to screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .replay-end-card {
@@ -911,6 +911,14 @@ body {
 
 .claim-box:empty {
   display: none;
+}
+
+.claim-support {
+  margin: 0.45rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .claim-btn {
@@ -1824,6 +1832,16 @@ body {
   .end-card:not(.replay-end-card) .claim-box {
     grid-column: 2;
     grid-row: 1;
+    align-self: start;
+  }
+
+  .end-card:not(.replay-end-card) .claim-box .claim-btn {
+    padding: 0.8rem 1rem;
+  }
+
+  .end-card:not(.replay-end-card) .claim-box .claim-support {
+    margin-top: 0.55rem;
+    font-size: 0.8rem;
   }
 
   .end-card:not(.replay-end-card) .end-actions {

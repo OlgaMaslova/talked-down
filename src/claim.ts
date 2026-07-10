@@ -127,6 +127,7 @@ export function renderClaimWidget(container: HTMLElement, identity: DeviceIdenti
 
   container.innerHTML = `
     <button type="button" class="claim-btn" id="claim-open-btn" title="Save this handle and record">Claim ${escapeHtml(identity.handle)}</button>
+    <p class="claim-support">Claim it to keep your handle, score, and streak when you switch devices.</p>
     <form class="claim-form hidden" id="claim-form">
       <input type="email" id="claim-email" class="claim-email-input" placeholder="you@example.com" autocomplete="email" required />
       <button type="submit" class="claim-submit-btn" id="claim-submit-btn">Send magic link</button>
