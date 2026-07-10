@@ -28,7 +28,7 @@ routerAdd("GET", "/api/game/percentile", (event) => {
   try {
     const records = event.app.findRecordsByFilter(
       "scores",
-      "day_number = {:day_number}",
+      "day_number = {:day_number} && archive = false",
       "",
       0,
       0,

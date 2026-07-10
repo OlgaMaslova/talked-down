@@ -202,10 +202,11 @@ routerAdd("GET", "/api/game/leaderboard", (e) => {
     "MAX(s.score) AS best_score, COUNT(s.id) AS plays, " +
     "COALESCE((SELECT s3.deal_price FROM scores s3 WHERE s3.device_id = s.device_id " +
     "AND (CASE WHEN {:by_day} = 1 THEN s3.day_number = {:day_number2} ELSE 1 END) " +
+    "AND s3.archive IS NOT TRUE " +
     "AND s3.outcome = 'deal' AND s3.deal_price > 0 " +
     "ORDER BY s3.score DESC, s3.rowid DESC LIMIT 1), -1) AS deal_price " +
     "FROM scores s LEFT JOIN claims c ON c.id = (SELECT c2.id FROM claims c2 WHERE c2.device_id = s.device_id AND c2.status = 'claimed' ORDER BY c2.claimed_at DESC LIMIT 1) " +
-    "WHERE s.device_id != ''";
+    "WHERE s.device_id != '' AND s.archive IS NOT TRUE";
   var params = { by_day: scope === "day" ? 1 : 0, day_number2: dayNumber === null ? -1 : dayNumber };
   if (scope === "day") {
     sql += " AND s.day_number = {:day_number}";

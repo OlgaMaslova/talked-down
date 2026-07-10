@@ -189,6 +189,11 @@ function newSessionRecord(app, scenario, spec, identity) {
     device_id: String(identity.device_id || "").slice(0, 64),
     handle: String(identity.handle || "").slice(0, 40),
   };
+  if (identity.archive) {
+    // Archive (past-day) play: scored but never ranked.
+    state.archive = true;
+    state.archive_day = intOrDefault(identity.archive_day, 0);
+  }
 
   record.set("scenario", scenario.id);
   record.set("token", token);
@@ -679,6 +684,30 @@ function currentDayNumber() {
   return Math.floor((Date.now() - DAY_ONE_UTC_MS) / 86400000) + 1;
 }
 
+function dateForDayNumber(dayNumber) {
+  var ms = DAY_ONE_UTC_MS + ((intOrDefault(dayNumber, 0) - 1) * 86400000);
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+// Finds the published scenario for a PAST day number (archive play).
+// Returns null for today/future/invalid days so archive can never be used
+// to preview or double-play the current day.
+function findArchiveScenario(app, dayNumber) {
+  dayNumber = intOrDefault(dayNumber, 0);
+  if (dayNumber < 1 || dayNumber >= currentDayNumber()) {
+    return null;
+  }
+  try {
+    return app.findFirstRecordByFilter(
+      "scenarios",
+      "status = {:status} && scenario_date = {:date}",
+      { status: "published", date: dateForDayNumber(dayNumber) }
+    );
+  } catch (err) {
+    return null;
+  }
+}
+
 function findTodaysScoreForDevice(app, deviceId) {
   deviceId = String(deviceId || "").slice(0, 64);
   if (!deviceId) {
@@ -690,7 +719,7 @@ function findTodaysScoreForDevice(app, deviceId) {
     try {
       var records = app.findRecordsByFilter(
         "scores",
-        "day = {:day} && device_id = {:device}",
+        "day = {:day} && device_id = {:device} && archive = false",
         "",
         1,
         0,
@@ -704,7 +733,7 @@ function findTodaysScoreForDevice(app, deviceId) {
     try {
       var dayNumberRecords = app.findRecordsByFilter(
         "scores",
-        "day_number = {:day} && device_id = {:device}",
+        "day_number = {:day} && device_id = {:device} && archive = false",
         "",
         1,
         0,
@@ -718,7 +747,7 @@ function findTodaysScoreForDevice(app, deviceId) {
     try {
       var dateRecords = app.findRecordsByFilter(
         "scores",
-        "day = {:day} && device_id = {:device}",
+        "day = {:day} && device_id = {:device} && archive = false",
         "",
         1,
         0,
@@ -771,7 +800,7 @@ function computeStreakForDevice(app, deviceId) {
   try {
     var records = app.findRecordsByFilter(
       "scores",
-      "device_id = {:device}",
+      "device_id = {:device} && archive = false",
       "-day",
       60,
       0,
@@ -798,25 +827,34 @@ function computeStreakForDevice(app, deviceId) {
 
 function saveServerScoreBestEffort(app, scenario, spec, outcome, dealPrice, turnsUsed, patienceLeft, sessionToken, sessionState) {
   var result = computeServerScore(spec, outcome, dealPrice, turnsUsed, patienceLeft);
-  var day = todayUTC();
   sessionState = sessionState || {};
+  var isArchive = !!sessionState.archive;
+  var scoreDayNumber = isArchive
+    ? (intOrDefault(sessionState.archive_day, 0) || currentDayNumber())
+    : currentDayNumber();
+  var day = isArchive ? dateForDayNumber(scoreDayNumber) : todayUTC();
   result.percentile = 0;
 
   try {
-    var existing = [];
-    try {
-      existing = app.findRecordsByFilter("scores", "day = {:day}", "", 0, 0, { day: day });
-    } catch (findErr) {
-      existing = [];
-    }
-
-    var below = 0;
-    for (var i = 0; i < existing.length; i++) {
-      if (existing[i].getInt("score") < result.score) {
-        below++;
+    if (isArchive) {
+      // Archive plays never enter the daily distribution and get no percentile.
+      result.percentile = null;
+    } else {
+      var existing = [];
+      try {
+        existing = app.findRecordsByFilter("scores", "day = {:day} && archive = false", "", 0, 0, { day: day });
+      } catch (findErr) {
+        existing = [];
       }
+
+      var below = 0;
+      for (var i = 0; i < existing.length; i++) {
+        if (existing[i].getInt("score") < result.score) {
+          below++;
+        }
+      }
+      result.percentile = Math.round(100 * below / Math.max(1, existing.length + 1));
     }
-    result.percentile = Math.round(100 * below / Math.max(1, existing.length + 1));
 
     var collection = app.findCollectionByNameOrId("scores");
     var record = new Record(collection);
@@ -830,8 +868,9 @@ function saveServerScoreBestEffort(app, scenario, spec, outcome, dealPrice, turn
     if (outcome === "deal" && finalPrice !== null) {
       record.set("deal_price", finalPrice);
     }
-    record.set("percentile", result.percentile);
-    record.set("day_number", currentDayNumber());
+    record.set("percentile", isArchive ? 0 : result.percentile);
+    record.set("day_number", scoreDayNumber);
+    record.set("archive", isArchive);
     if (sessionState.device_id) {
       record.set("device_id", String(sessionState.device_id).slice(0, 64));
     }
@@ -908,6 +947,8 @@ module.exports = {
   scriptedFallbackLine: scriptedFallbackLine,
   computeServerScore: computeServerScore,
   currentDayNumber: currentDayNumber,
+  dateForDayNumber: dateForDayNumber,
+  findArchiveScenario: findArchiveScenario,
   findTodaysScoreForDevice: findTodaysScoreForDevice,
   computeStreakForDevice: computeStreakForDevice,
   saveServerScoreBestEffort: saveServerScoreBestEffort,

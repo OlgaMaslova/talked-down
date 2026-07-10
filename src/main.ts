@@ -7,6 +7,7 @@ import type { ScoreResult } from './scoring';
 import { getIdentity, type DeviceIdentity } from './identity';
 import { renderClaimWidget, claimedBadgeHtml, consumeClaimTokenFromUrl } from './claim';
 import { bindLeaderboardTrigger } from './leaderboard';
+import { bindArchiveTrigger, type ArchiveDayEntry } from './archive';
 
 /** Public fields of an LLM-generated scenario, as returned by session/start. */
 interface LlmScenario {
@@ -131,6 +132,43 @@ async function startBackendSession(identity: DeviceIdentity): Promise<SessionSta
   }
 }
 
+/** Result of trying to start a replay session for a past (archived) day. */
+type ArchiveSessionStart =
+  | { ok: true; session_token: string; scenario: LlmScenario; dayNumber: number }
+  | { ok: false; error: string };
+
+/**
+ * Calls session/start with an explicit past day_number to replay an
+ * archived scenario. Unlike startBackendSession, archive starts never
+ * return already_played, so any well-formed llm response is a fresh game.
+ */
+async function startArchiveSession(identity: DeviceIdentity, dayNumber: number): Promise<ArchiveSessionStart> {
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/game/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: identity.deviceId, handle: identity.handle, day_number: dayNumber }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const message =
+        data && typeof data.error === 'string' ? data.error : 'That negotiation isn\u2019t available right now.';
+      return { ok: false, error: message };
+    }
+    if (data && data.llm === true && data.session_token && data.scenario) {
+      return {
+        ok: true,
+        session_token: data.session_token,
+        scenario: data.scenario as LlmScenario,
+        dayNumber: typeof data.day_number === 'number' ? data.day_number : dayNumber,
+      };
+    }
+    return { ok: false, error: 'That negotiation isn\u2019t available right now.' };
+  } catch {
+    return { ok: false, error: 'Network hiccup — try again in a moment.' };
+  }
+}
+
 interface PercentileResponse {
   day_number: number;
   score: number;
@@ -209,8 +247,9 @@ function buildShareText(
   outcome: 'deal' | 'no_deal',
   turns: number,
   score: number,
+  isArchive = false,
 ): string {
-  const line1 = `Talked Down #${dayNumber}`;
+  const line1 = `Talked Down #${dayNumber}${isArchive ? ' (archive)' : ''}`;
   const line2 = outcome === 'deal' ? `🤝 Deal in ${turns} turn${turns === 1 ? '' : 's'}` : '💥 No deal';
 
   const moneyFilled = Math.min(5, Math.max(0, Math.round(score / 20)));
@@ -298,6 +337,8 @@ interface GameContext {
   initialTurn: CharacterTurn;
   scoreTurn: (turn: CharacterTurn) => ScoreResult;
   recordScore: (score: number, label: string, turn: CharacterTurn) => Promise<void>;
+  /** True when this session is a replay of a past day: unranked, no streak/percentile/claim. */
+  archive?: boolean;
 }
 
 function renderGame(root: HTMLElement, ctx: GameContext): void {
@@ -313,7 +354,10 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
             <span class="brand-tagline">Talk the AI down. One negotiation a day.</span>
           </div>
         </div>
-        <span class="day-badge">Talked Down #${ctx.dayNumber}</span>
+        <div class="badge-row">
+          <span class="day-badge">Talked Down #${ctx.dayNumber}</span>
+          ${ctx.archive ? '<span class="archive-flag">🗓️ Archive — unranked</span>' : ''}
+        </div>
         <h1 class="scenario-title">${escapeHtml(ctx.title)}</h1>
         <div class="character-line">
           <span class="char-name">${escapeHtml(ctx.characterName)}</span>
@@ -321,7 +365,10 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         </div>
         ${ctx.playerBrief ? `<p class="player-brief">${escapeHtml(ctx.playerBrief)}</p>` : ''}
         <p class="house-rules">📜 House rules: ${ctx.maxTurns} message${ctx.maxTurns === 1 ? '' : 's'} max, ${ctx.maxMessageChars} characters each.</p>
-        <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
+        <div class="header-buttons">
+          <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
+          <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">🗓️ Past negotiations</button>
+        </div>
         ${
           ctx.showAsk
             ? `<div class="meters"><div class="ask-display">
@@ -365,12 +412,18 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   const askValue = root.querySelector<HTMLElement>('#ask-value');
   const endPanel = root.querySelector<HTMLElement>('#end-panel');
   const leaderboardBtnHeader = root.querySelector<HTMLButtonElement>('#leaderboard-btn-header');
+  const archiveBtnHeader = root.querySelector<HTMLButtonElement>('#archive-btn-header');
 
   if (!chatLog || !inputRow || !chatInput || !sendBtn || !charCounter || !endPanel) {
     return;
   }
 
   if (leaderboardBtnHeader) bindLeaderboardTrigger(leaderboardBtnHeader, ctx.dayNumber);
+  if (archiveBtnHeader) {
+    bindArchiveTrigger(archiveBtnHeader, getDayNumber(), (day) => {
+      void playArchivedDay(root, ctx.identity, day);
+    });
+  }
 
   // ---- Mobile keyboard-safe viewport handling ----
   // On phones, opening the on-screen keyboard shrinks the *visual* viewport
@@ -504,26 +557,31 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           <div class="end-score-number">${score}/100</div>
           <div class="end-score-label">${label}</div>
         </div>
-        <div class="end-percentile" id="end-percentile"></div>
+        ${ctx.archive ? '' : '<div class="end-percentile" id="end-percentile"></div>'}
         <div class="end-meta">
           <span class="handle-badge" title="Your handle on this device">🎭 ${escapeHtml(ctx.identity.handle)}${claimedBadgeHtml()}</span>
-          <span class="streak-badge">🔥 ${ctx.streak} day streak</span>
+          ${ctx.archive ? '' : `<span class="streak-badge">🔥 ${ctx.streak} day streak</span>`}
         </div>
         <div class="history-box" id="history-box"></div>
         <div class="share-card" id="share-card"></div>
-        <div class="claim-box" id="claim-box"></div>
+        ${ctx.archive ? '' : '<div class="claim-box" id="claim-box"></div>'}
         <div class="end-actions">
           <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
           <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">🏆 Best negotiators</button>
+          <button class="leaderboard-btn archive-btn" id="archive-btn-end" type="button">🗓️ Past negotiations</button>
         </div>
-        <div class="countdown-box">
+        ${
+          ctx.archive
+            ? '<button type="button" class="back-to-today-btn" id="back-to-today-btn">← Back to today</button>'
+            : `<div class="countdown-box">
           Next negotiation in
           <span class="countdown-value" id="countdown-value">--:--:--</span>
-        </div>
+        </div>`
+        }
       </div>
     `;
 
-    const shareText = buildShareText(ctx.dayNumber, outcome, turn.state.turns, score);
+    const shareText = buildShareText(ctx.dayNumber, outcome, turn.state.turns, score, ctx.archive === true);
     const shareCard = endPanel.querySelector<HTMLElement>('#share-card');
     if (shareCard) shareCard.textContent = shareText;
 
@@ -552,7 +610,22 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
     const leaderboardBtnEnd = endPanel.querySelector<HTMLButtonElement>('#leaderboard-btn-end');
     if (leaderboardBtnEnd) bindLeaderboardTrigger(leaderboardBtnEnd, ctx.dayNumber);
 
+    const archiveBtnEnd = endPanel.querySelector<HTMLButtonElement>('#archive-btn-end');
+    if (archiveBtnEnd) {
+      bindArchiveTrigger(archiveBtnEnd, getDayNumber(), (day) => {
+        void playArchivedDay(root, ctx.identity, day);
+      });
+    }
+
+    const backToTodayBtn = endPanel.querySelector<HTMLButtonElement>('#back-to-today-btn');
+    if (backToTodayBtn) {
+      backToTodayBtn.addEventListener('click', () => {
+        window.location.href = window.location.pathname;
+      });
+    }
+
     // Anonymous daily percentile vs today's score distribution (no signup).
+    // Skipped entirely for archive replays: unranked plays have no daily cohort.
     const percentileEl = endPanel.querySelector<HTMLElement>('#end-percentile');
     if (percentileEl && typeof turn.percentile === 'number') {
       // Server computed the daily percentile deterministically on the final turn.
@@ -655,8 +728,9 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   }
 }
 
-function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: number): void {
-  const streak = updateStreak(dayNumber);
+function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: number, archive = false): void {
+  // Archive replays never touch the streak: read it, don't bump it.
+  const streak = archive ? getStoredStreak() : updateStreak(dayNumber);
   const identity = getIdentity();
   const scenario = session.scenario;
   const showAsk = scenario.current_ask !== null;
@@ -691,7 +765,25 @@ function loadLlmGame(root: HTMLElement, session: SessionStartLlm, dayNumber: num
     // The server writes the score record itself once the session ends;
     // nothing to do client-side.
     recordScore: async () => {},
+    archive,
   });
+}
+
+/**
+ * Starts an unranked replay of a past day chosen from the archive overlay,
+ * then renders it through the same renderGame machinery as a live game.
+ * Any failure (invalid day, network error) falls back to a full reload,
+ * which lands the player back on today's normal game.
+ */
+async function playArchivedDay(root: HTMLElement, identity: DeviceIdentity, day: ArchiveDayEntry): Promise<void> {
+  root.innerHTML = `<div class="loading">Loading Talked Down #${day.day_number}\u2026</div>`;
+  const result = await startArchiveSession(identity, day.day_number);
+  if (!result.ok) {
+    showBanner(result.error, 'error');
+    window.location.href = window.location.pathname;
+    return;
+  }
+  loadLlmGame(root, { llm: true, session_token: result.session_token, scenario: result.scenario }, result.dayNumber, true);
 }
 
 /**
@@ -720,9 +812,14 @@ function renderAlreadyPlayed(
             <span class="brand-tagline">Talk the AI down. One negotiation a day.</span>
           </div>
         </div>
-        <span class="day-badge">Talked Down #${effectiveDay}</span>
+        <div class="badge-row">
+          <span class="day-badge">Talked Down #${effectiveDay}</span>
+        </div>
         <h1 class="scenario-title">You\u2019ve already played today\u2019s negotiation.</h1>
-        <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
+        <div class="header-buttons">
+          <button type="button" class="leaderboard-btn" id="leaderboard-btn-header">🏆 Best negotiators</button>
+          <button type="button" class="leaderboard-btn archive-btn" id="archive-btn-header">🗓️ Past negotiations</button>
+        </div>
       </header>
       <div class="end-panel" id="end-panel">
         <div class="end-card">
@@ -747,6 +844,7 @@ function renderAlreadyPlayed(
           <div class="end-actions">
             <button class="copy-btn" id="copy-btn" type="button">Copy result</button>
             <button class="leaderboard-btn" id="leaderboard-btn-end" type="button">🏆 Best negotiators</button>
+            <button class="leaderboard-btn archive-btn" id="archive-btn-end" type="button">🗓️ Past negotiations</button>
           </div>
           <div class="countdown-box">
             Next negotiation in
@@ -788,6 +886,20 @@ function renderAlreadyPlayed(
 
   const leaderboardBtnEnd = root.querySelector<HTMLButtonElement>('#leaderboard-btn-end');
   if (leaderboardBtnEnd) bindLeaderboardTrigger(leaderboardBtnEnd, effectiveDay);
+
+  const archiveBtnHeader = root.querySelector<HTMLButtonElement>('#archive-btn-header');
+  if (archiveBtnHeader) {
+    bindArchiveTrigger(archiveBtnHeader, getDayNumber(), (day) => {
+      void playArchivedDay(root, identity, day);
+    });
+  }
+
+  const archiveBtnEnd = root.querySelector<HTMLButtonElement>('#archive-btn-end');
+  if (archiveBtnEnd) {
+    bindArchiveTrigger(archiveBtnEnd, getDayNumber(), (day) => {
+      void playArchivedDay(root, identity, day);
+    });
+  }
 
   const historyBox = root.querySelector<HTMLElement>('#history-box');
   if (historyBox) {

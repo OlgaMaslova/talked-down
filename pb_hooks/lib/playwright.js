@@ -920,7 +920,7 @@ function computeDailyRecap(app, recapDate) {
   try {
     records = app.findRecordsByFilter(
       "scores",
-      "day_number = {:day} && device_id != {:calib}",
+      "day_number = {:day} && device_id != {:calib} && archive = false",
       "-score",
       5000,
       0,

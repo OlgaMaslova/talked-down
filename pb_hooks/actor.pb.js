@@ -2,22 +2,36 @@
 
 routerAdd("POST", "/api/game/session/start", (e) => {
   var actorLib = require(__hooks + "/lib/actor.js");
-  var scenario = actorLib.findTodaysScenario(e.app);
+  var startBody = e.requestInfo().body || {};
+
+  // Archive play: an explicit PAST day_number opens that day's scenario.
+  // Archive plays are scored but never ranked, and there is no one-play-per-day
+  // gate for them (they cannot enter the daily distribution anyway).
+  var archiveDay = 0;
+  if (typeof startBody.day_number !== "undefined" && startBody.day_number !== null && String(startBody.day_number) !== "") {
+    archiveDay = parseInt(String(startBody.day_number), 10);
+    if (isNaN(archiveDay) || archiveDay < 1 || archiveDay >= actorLib.currentDayNumber()) {
+      return e.json(400, { error: "invalid_day_number" });
+    }
+  }
+
+  var scenario = archiveDay
+    ? actorLib.findArchiveScenario(e.app, archiveDay)
+    : actorLib.findTodaysScenario(e.app);
   if (!scenario) {
-    return e.json(200, { llm: false });
+    return archiveDay ? e.json(404, { error: "scenario_not_found" }) : e.json(200, { llm: false });
   }
 
   var secretRecord;
   try {
     secretRecord = actorLib.findSecretForScenario(e.app, scenario.id);
   } catch (err) {
-    return e.json(200, { llm: false });
+    return archiveDay ? e.json(404, { error: "scenario_not_found" }) : e.json(200, { llm: false });
   }
 
   var spec = actorLib.getJSONField(secretRecord, "secret_spec", {});
-  var startBody = e.requestInfo().body || {};
   var deviceId = String(startBody.device_id || "").slice(0, 64);
-  if (deviceId) {
+  if (deviceId && !archiveDay) {
     var sc = actorLib.findTodaysScoreForDevice(e.app, deviceId);
     if (sc) {
       return e.json(200, {
@@ -38,12 +52,56 @@ routerAdd("POST", "/api/game/session/start", (e) => {
   var created = actorLib.newSessionRecord(e.app, scenario, spec, {
     device_id: startBody.device_id,
     handle: startBody.handle,
+    archive: archiveDay > 0,
+    archive_day: archiveDay,
   });
-  return e.json(200, {
+  var payload = {
     llm: true,
     session_token: created.token,
     scenario: actorLib.publicScenarioPayload(scenario, spec, created.state),
-  });
+  };
+  if (archiveDay) {
+    payload.archive = true;
+    payload.day_number = archiveDay;
+  }
+  return e.json(200, payload);
+});
+
+// Lists past days whose scenarios can be replayed from the archive.
+routerAdd("GET", "/api/game/archive/days", (e) => {
+  var actorLib = require(__hooks + "/lib/actor.js");
+  var today = actorLib.currentDayNumber();
+  var days = [];
+  try {
+    var records = e.app.findRecordsByFilter(
+      "scenarios",
+      "status = {:status} && scenario_date < {:today}",
+      "-scenario_date",
+      60,
+      0,
+      { status: "published", today: actorLib.dateForDayNumber(today) }
+    );
+    for (var i = 0; i < records.length; i++) {
+      var dateStr = String(records[i].getString("scenario_date") || "").slice(0, 10);
+      var ms = Date.parse(dateStr + "T00:00:00Z");
+      if (isNaN(ms)) {
+        continue;
+      }
+      var dayNumber = Math.floor((ms - Date.UTC(2026, 6, 7)) / 86400000) + 1;
+      if (dayNumber < 1 || dayNumber >= today) {
+        continue;
+      }
+      days.push({
+        day_number: dayNumber,
+        date: dateStr,
+        title: records[i].getString("title"),
+        character_name: records[i].getString("character_name"),
+      });
+    }
+  } catch (err) {
+    days = [];
+  }
+  return e.json(200, { days: days });
 });
 
 routerAdd("POST", "/api/game/session/turn", (e) => {
@@ -234,6 +292,9 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
   if (leverHit && leversUsed.indexOf(leverHit) === -1) {
     leversUsed = leversUsed.concat([leverHit]);
   }
+  var priorArchive = !!state.archive;
+  var priorArchiveDay = state.archive_day;
+  var priorGrindCap = state.grind_cap;
   state = {
     patience: nextPatience,
     turns: nextTurns,
@@ -243,6 +304,13 @@ routerAdd("POST", "/api/game/session/turn", (e) => {
     handle: priorHandle,
     levers_used: leversUsed,
   };
+  if (typeof priorGrindCap !== "undefined") {
+    state.grind_cap = priorGrindCap;
+  }
+  if (priorArchive) {
+    state.archive = true;
+    state.archive_day = priorArchiveDay;
+  }
   if (!accepted && pendingOffer !== null) {
     state.pending_offer = pendingOffer;
   }
