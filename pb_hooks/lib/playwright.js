@@ -502,7 +502,7 @@ function selectDiverseScenarioCandidate(app, targetDate, cycle, recent, candidat
     }
     var judge = openai.chatJSON(
       buildDiversityJudgeMessages(recent, candidates),
-      { temperature: 0, timeout: 60, context: "scenario_diversity_judge", model: env("PLAYWRIGHT_MODEL") || "gpt-5.4-mini" }
+      { temperature: 0, timeout: 60, context: "scenario_diversity_judge", model: env("PLAYWRIGHT_MODEL") || "gpt-5.4" }
     );
     if (!judge || typeof judge !== "object" || Array.isArray(judge)) {
       throw new Error("diversity judge output is not an object");
@@ -532,7 +532,7 @@ function generateScenarioWithRetries(app, targetDate, cycle) {
     try {
       var raw = openai.chatJSON(
         buildGenerationMessages(targetDate, recent, candidateNumber, cycle),
-        { temperature: 0.95, timeout: 60, context: "scenario_generation", model: env("PLAYWRIGHT_MODEL") || "gpt-5.4-mini" }
+        { temperature: 0.95, timeout: 60, context: "scenario_generation", model: env("PLAYWRIGHT_MODEL") || "gpt-5.4" }
       );
       candidates.push(normalizeAndValidateGenerated(raw, recent));
     } catch (err) {
