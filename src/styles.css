@@ -268,11 +268,79 @@ body {
   font-weight: 700;
 }
 
+.actor-profile {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+  min-width: 0;
+}
+
+.actor-portrait {
+  position: relative;
+  width: 3.75rem;
+  height: 3.75rem;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--panel-raised) 76%, var(--accent-soft));
+  isolation: isolate;
+}
+
+.actor-portrait-image,
+.actor-portrait-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.actor-portrait-image {
+  z-index: 2;
+  display: block;
+  object-fit: cover;
+  object-position: center 28%;
+  opacity: 0;
+  transition: opacity 220ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.actor-portrait-fallback {
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 72% 18%, var(--surface-glint) 0, transparent 58%),
+    color-mix(in oklch, var(--panel-raised) 74%, var(--accent-soft));
+  color: var(--accent-hover);
+  opacity: 1;
+  transition: opacity 180ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.actor-portrait.has-image .actor-portrait-image {
+  opacity: 1;
+}
+
+.actor-portrait.has-image .actor-portrait-fallback {
+  opacity: 0;
+}
+
+.actor-initials {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
 .character-line {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.05rem;
-  margin-bottom: 0.7rem;
+  min-width: 0;
+  margin: 0;
 }
 
 .char-name {
@@ -1567,6 +1635,22 @@ body {
     font-weight: 650;
     line-height: 1.18;
     letter-spacing: -0.025em;
+  }
+
+  .actor-profile {
+    display: block;
+    margin: 0;
+  }
+
+  .actor-portrait {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    margin-bottom: 1rem;
+  }
+
+  .actor-initials {
+    font-size: 2.75rem;
   }
 
   .character-line {

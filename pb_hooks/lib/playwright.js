@@ -229,6 +229,28 @@ function scenarioPublicPayload(record) {
   };
 }
 
+function buildActorPortraitPrompt(publicScenario) {
+  publicScenario = publicScenario || {};
+  var title = trimString(publicScenario.title).slice(0, 160);
+  var name = trimString(publicScenario.character_name).slice(0, 80);
+  var persona = trimString(publicScenario.character_persona).slice(0, 500);
+  var brief = trimString(publicScenario.player_brief).slice(0, 1000);
+  var opening = trimString(publicScenario.opening_message).slice(0, 500);
+
+  return [
+    "Create a square 1:1 head-and-shoulders portrait of an original fictional character for a daily negotiation game.",
+    "Use polished editorial storybook realism, expressive natural features, cinematic soft lighting, and a simple setting suggested by the public scenario.",
+    "The character must be clearly visible and centered, with no other prominent people.",
+    "Do not imitate or depict a real person, celebrity, trademarked character, or existing franchise.",
+    "Do not include any text, letters, numbers, captions, signs, watermarks, interface elements, borders, or logos.",
+    "Public scenario title: " + title,
+    "Character name: " + name,
+    "Public character persona: " + persona,
+    "Public player brief: " + brief,
+    "Public opening line: " + opening
+  ].join("\n");
+}
+
 function domainCatalogEntry(key) {
   key = trimString(key).toLowerCase();
   for (var i = 0; i < DOMAIN_CATALOG.length; i++) {
@@ -733,6 +755,46 @@ function createDraftScenario(app, targetDate, generated) {
   return { scenario: scenario, secretRecord: secretRecord };
 }
 
+function attachActorPortraitBestEffort(app, scenario) {
+  try {
+    var existing = scenario.getString("actor_portrait");
+    if (existing) {
+      return existing;
+    }
+
+    var prompt = buildActorPortraitPrompt(scenarioPublicPayload(scenario));
+    var image = openai.generateImage(prompt, {
+      model: env("OPENAI_IMAGE_MODEL") || "gpt-image-1-mini",
+      size: "1024x1024",
+      quality: "low",
+      outputFormat: "jpeg",
+      outputCompression: 70,
+      timeout: 120,
+      context: "actor_portrait",
+      filename: "actor-portrait.jpg"
+    });
+    if (!image || !image.bytes || !image.bytes.length) {
+      throw new Error("image generator returned no bytes");
+    }
+    if (typeof $filesystem === "undefined" || !$filesystem.fileFromBytes) {
+      throw new Error("PocketBase filesystem helper unavailable");
+    }
+
+    scenario.set("actor_portrait", $filesystem.fileFromBytes(image.bytes, image.filename));
+    app.save(scenario);
+    var stored = scenario.getString("actor_portrait");
+    if (!stored) {
+      throw new Error("portrait attachment saved without a filename");
+    }
+    logInfo(app, "nightly_playwright attached actor portrait to scenario " + scenario.id);
+    return stored;
+  } catch (err) {
+    // Portraits are an enhancement only. Never stop security testing or publication.
+    logError(app, "nightly_playwright actor portrait unavailable for scenario " + (scenario && scenario.id ? scenario.id : "unknown") + ": " + err.message);
+    return "";
+  }
+}
+
 function retireScenario(app, scenario) {
   try {
     if (scenario && scenario.getString("status") === "draft") {
@@ -1087,6 +1149,10 @@ function runPlaywrightPipeline(app, targetDate, source, force) {
     saveSecurityReport(app, created.secretRecord, report);
 
     if (report.passed) {
+      // Generate and persist the public portrait after security passes but before
+      // publication. Failures are logged inside the helper and never block publish.
+      attachActorPortraitBestEffort(app, created.scenario);
+
       var replacedId = null;
       if (existing) {
         try {
@@ -1357,6 +1423,8 @@ module.exports = {
     buildGenerationMessages: buildGenerationMessages,
     normalizeAndValidateGenerated: normalizeAndValidateGenerated,
     buildDiversityJudgeMessages: buildDiversityJudgeMessages,
-    selectDiverseScenarioCandidate: selectDiverseScenarioCandidate
+    selectDiverseScenarioCandidate: selectDiverseScenarioCandidate,
+    buildActorPortraitPrompt: buildActorPortraitPrompt,
+    attachActorPortraitBestEffort: attachActorPortraitBestEffort
   }
 };

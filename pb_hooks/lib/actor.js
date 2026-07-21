@@ -238,7 +238,7 @@ function sanitizeOpeningMessage(text) {
 }
 
 function publicScenarioPayload(scenario, spec, state) {
-  return {
+  var payload = {
     title: scenario.getString("title"),
     character_name: scenario.getString("character_name"),
     character_persona: scenario.getString("character_persona"),
@@ -250,6 +250,17 @@ function publicScenarioPayload(scenario, spec, state) {
     max_message_chars: MAX_MESSAGE_CHARS,
     current_ask: state.current_ask,
   };
+
+  // PocketBase file URLs require the stored filename and record id (the public
+  // collection is always "scenarios"). Keep both properties absent for legacy
+  // scenarios so existing clients remain valid.
+  var portraitFilename = scenario.getString("actor_portrait");
+  if (portraitFilename) {
+    payload.actor_image = portraitFilename;
+    payload.actor_image_record_id = String(scenario.id || "");
+  }
+
+  return payload;
 }
 
 function formatTranscriptForPrompt(transcript) {

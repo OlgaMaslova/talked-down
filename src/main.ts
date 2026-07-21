@@ -17,6 +17,8 @@ interface LlmScenario {
   character_persona: string;
   opening_message: string;
   player_brief?: string | null;
+  actor_image?: string | null;
+  actor_image_record_id?: string | null;
   currency: string;
   patience: number;
   max_turns: number;
@@ -425,6 +427,72 @@ function escapeHtml(value: string): string {
   return div.innerHTML;
 }
 
+function getActorInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  const first = Array.from(parts[0])[0] ?? '';
+  const last = Array.from(parts.length === 1 ? parts[0] : parts[parts.length - 1]);
+  const initials = parts.length === 1 ? `${first}${last[1] ?? ''}` : `${first}${last[0] ?? ''}`;
+  return initials.toLocaleUpperCase();
+}
+
+function resolveActorImageUrl(scenario: LlmScenario): string | null {
+  const filename = typeof scenario.actor_image === 'string' ? scenario.actor_image.trim() : '';
+  const recordId =
+    typeof scenario.actor_image_record_id === 'string' ? scenario.actor_image_record_id.trim() : '';
+  if (!filename || !recordId) return null;
+
+  try {
+    const url = pb.files.getURL({ id: recordId, collectionName: 'scenarios' }, filename);
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+
+function actorPortraitHtml(ctx: GameContext): string {
+  const fallbackLabel = `${ctx.characterName}'s portrait is unavailable`;
+  const fallbackHidden = ctx.actorImageUrl ? 'true' : 'false';
+  return `
+    <div class="actor-portrait${ctx.actorImageUrl ? ' is-loading' : ' is-fallback'}">
+      <div class="actor-portrait-fallback" role="img" aria-label="${escapeHtml(fallbackLabel)}" aria-hidden="${fallbackHidden}">
+        <span class="actor-initials" aria-hidden="true">${escapeHtml(getActorInitials(ctx.characterName))}</span>
+      </div>
+      ${
+        ctx.actorImageUrl
+          ? `<img class="actor-portrait-image" src="${escapeHtml(ctx.actorImageUrl)}" alt="Portrait of the person you are negotiating with." width="480" height="480" loading="eager" decoding="async" fetchpriority="high" />`
+          : ''
+      }
+    </div>
+  `;
+}
+
+function bindActorPortrait(scope: HTMLElement): void {
+  const portrait = scope.querySelector<HTMLElement>('.actor-portrait');
+  const image = portrait?.querySelector<HTMLImageElement>('.actor-portrait-image');
+  const fallback = portrait?.querySelector<HTMLElement>('.actor-portrait-fallback');
+  if (!portrait || !image || !fallback) return;
+
+  const showImage = (): void => {
+    portrait.classList.remove('is-loading', 'is-fallback');
+    portrait.classList.add('has-image');
+    fallback.setAttribute('aria-hidden', 'true');
+  };
+  const showFallback = (): void => {
+    image.remove();
+    portrait.classList.remove('is-loading', 'has-image');
+    portrait.classList.add('is-fallback');
+    fallback.setAttribute('aria-hidden', 'false');
+  };
+
+  image.addEventListener('load', showImage, { once: true });
+  image.addEventListener('error', showFallback, { once: true });
+  if (image.complete) {
+    if (image.naturalWidth > 0) showImage();
+    else showFallback();
+  }
+}
+
 /** Transient top-of-screen banner used for claim confirmations/errors. */
 function showBanner(message: string, kind: 'success' | 'error'): void {
   const banner = document.createElement('div');
@@ -465,6 +533,7 @@ interface GameContext {
   title: string;
   characterName: string;
   characterPersona: string;
+  actorImageUrl?: string | null;
   playerBrief?: string | null;
   openingMessage: string;
   currency: string | null;
@@ -527,9 +596,12 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           }
         </div>
         <h1 class="scenario-title">${escapeHtml(ctx.title)}</h1>
-        <div class="character-line">
-          <span class="char-name">${escapeHtml(ctx.characterName)}</span>
-          <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
+        <div class="actor-profile">
+          ${actorPortraitHtml(ctx)}
+          <div class="character-line">
+            <span class="char-name">${escapeHtml(ctx.characterName)}</span>
+            <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
+          </div>
         </div>
         ${
           ctx.playerBrief
@@ -586,6 +658,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
   }
 
   bindMobileHeaderMenu(root);
+  bindActorPortrait(root);
   if (leaderboardBtnHeader) bindLeaderboardTrigger(leaderboardBtnHeader, ctx.dayNumber);
   if (leaderboardBtnDesktop) bindLeaderboardTrigger(leaderboardBtnDesktop, ctx.dayNumber);
   if (archiveBtnHeader) {
@@ -1036,6 +1109,7 @@ function loadLlmGame(
     title: scenario.title,
     characterName: scenario.character_name,
     characterPersona: scenario.character_persona,
+    actorImageUrl: resolveActorImageUrl(scenario),
     playerBrief: scenario.player_brief ?? null,
     openingMessage: scenario.opening_message,
     currency: scenario.currency,

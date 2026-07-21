@@ -35,6 +35,43 @@ const spec = {
   levers: { rewards: ["offers to handle pickup and hauling themselves", "mentions buying the spare parts crate too"] },
 };
 
+function scenarioRecord(values) {
+  return {
+    id: values.id || "scenario-id",
+    getString(name) {
+      const value = values[name];
+      return value === null || typeof value === "undefined" ? "" : String(value);
+    },
+  };
+}
+
+// --- public scenario portrait payload ---------------------------------------
+{
+  const payload = actor.publicScenarioPayload(scenarioRecord({
+    id: "portrait-record",
+    title: "A Difficult Deal",
+    character_name: "Mara Venn",
+    character_persona: "a careful station mechanic",
+    opening_message: "Name your terms.",
+    player_brief: "Negotiate for the part.",
+    actor_portrait: "actor-portrait_ab12cd.jpg",
+  }), { currency: "credits", max_turns: 10 }, { patience: 6, current_ask: 4800 });
+  check(
+    "portrait payload includes PocketBase file identity",
+    payload.actor_image === "actor-portrait_ab12cd.jpg" &&
+      payload.actor_image_record_id === "portrait-record",
+    { actor_image: payload.actor_image, actor_image_record_id: payload.actor_image_record_id },
+  );
+}
+{
+  const payload = actor.publicScenarioPayload(scenarioRecord({
+    title: "Legacy Deal",
+    character_name: "Old Actor",
+    opening_message: "Let's talk.",
+  }), { currency: "credits" }, { patience: 5, current_ask: 100 });
+  check("legacy payload omits absent portrait", !("actor_image" in payload) && !("actor_image_record_id" in payload), payload);
+}
+
 // --- number parsing / formats (still used for player-side price parsing) -----
 check("parses 4,500 as 4500", actor.parsePriceToken("4,500") === 4500);
 check("parses 4.500 as 4500", actor.parsePriceToken("4.500") === 4500);

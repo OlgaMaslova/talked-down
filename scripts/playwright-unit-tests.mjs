@@ -13,6 +13,7 @@ copyFileSync(join(here, "../pb_hooks/lib/playwright.js"), join(stage, "playwrigh
 copyFileSync(join(here, "../pb_hooks/lib/openai.js"), join(stage, "openai.js"));
 const require = createRequire(import.meta.url);
 const playwright = require(join(stage, "playwright.cjs"))._test;
+const openai = require(join(stage, "openai.js"))._test;
 
 let failures = 0;
 function check(name, condition, detail) {
@@ -82,6 +83,33 @@ try {
   historyError = error.message;
 }
 check("history query failures stop generation", historyError.includes("recent scenario history query failed"), historyError);
+
+const portraitPrompt = playwright.buildActorPortraitPrompt({
+  ...recentScenarioRecord,
+  title: "The Last Spare Reactor Core",
+  character_name: "Mara Venn",
+  character_persona: "a station mechanic beside a cargo bay",
+  opening_message: "I can part with one reactor core, but not for scraps.",
+  player_brief: "Negotiate with the station mechanic for the reactor core.",
+  floor_price: 987654,
+  secret_lever: "never expose this",
+});
+check("portrait prompt requests an original no-text square portrait", portraitPrompt.includes("square 1:1") && portraitPrompt.includes("original fictional") && portraitPrompt.includes("Do not include any text"), portraitPrompt);
+check("portrait prompt ignores private-shaped properties", !portraitPrompt.includes("987654") && !portraitPrompt.includes("never expose this"), portraitPrompt);
+
+const imagePayload = openai.imageRequestPayload("portrait prompt", {});
+check("image request uses low-cost square JPEG defaults", imagePayload.model === "gpt-image-1-mini" && imagePayload.size === "1024x1024" && imagePayload.quality === "low" && imagePayload.output_format === "jpeg" && imagePayload.output_compression === 70, imagePayload);
+check("base64 image bytes decode without Node Buffer", JSON.stringify(openai.decodeBase64("AQID/w==")) === "[1,2,3,255]", openai.decodeBase64("AQID/w=="));
+
+let portraitFailureResult = "not-called";
+try {
+  portraitFailureResult = playwright.attachActorPortraitBestEffort({
+    logger() { return { info() {}, error() {} }; },
+  }, recentScenarioRecord);
+} catch (error) {
+  portraitFailureResult = error.message;
+}
+check("portrait generation failure remains best-effort", portraitFailureResult === "", portraitFailureResult);
 
 const generationMessages = playwright.buildGenerationMessages("2026-07-12", recent, 1, 1);
 const generationPayload = JSON.parse(generationMessages[1].content);
