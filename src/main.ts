@@ -1,4 +1,4 @@
-import './styles.css';
+import styles from './styles.css?inline';
 import logoUrl from './assets/td-logo.jpg';
 import { pb, apiBaseUrl } from './pocketbase';
 import type { CharacterTurn, CharacterTurnState, NegotiationEngine } from './engine';
@@ -9,6 +9,10 @@ import { renderClaimWidget, claimedBadgeHtml, consumeClaimTokenFromUrl } from '.
 import { bindLeaderboardTrigger } from './leaderboard';
 import { bindArchiveTrigger, type ArchiveDayEntry } from './archive';
 import { applyDailyTheme, getDailyTheme } from './theme';
+
+const style = document.createElement('style');
+style.textContent = styles;
+document.head.append(style);
 
 /** Public fields of an LLM-generated scenario, as returned by session/start. */
 interface LlmScenario {
