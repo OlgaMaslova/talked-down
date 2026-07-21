@@ -8,6 +8,7 @@ import { getIdentity, type DeviceIdentity } from './identity';
 import { renderClaimWidget, claimedBadgeHtml, consumeClaimTokenFromUrl } from './claim';
 import { bindLeaderboardTrigger } from './leaderboard';
 import { bindArchiveTrigger, type ArchiveDayEntry } from './archive';
+import { applyDailyTheme, getDailyTheme } from './theme';
 
 /** Public fields of an LLM-generated scenario, as returned by session/start. */
 interface LlmScenario {
@@ -484,6 +485,11 @@ interface GameContext {
 function renderGame(root: HTMLElement, ctx: GameContext): void {
   clearGameRuntime();
   const initialTurn = ctx.initialTurn;
+  const dailyTheme = getDailyTheme(ctx.dayNumber, {
+    title: ctx.title,
+    characterName: ctx.characterName,
+  });
+  applyDailyTheme(dailyTheme);
 
   root.innerHTML = `
     <div class="game">
@@ -491,6 +497,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         <div class="desktop-brand">
           <img class="brand-logo" src="${logoUrl}" width="32" height="32" alt="" />
           <span class="brand-word">Talked Down</span>
+          <span class="desktop-theme"><span class="theme-swatch" aria-hidden="true"></span>${escapeHtml(dailyTheme.name)}</span>
           <span class="desktop-identity">Negotiating as <strong>${escapeHtml(ctx.identity.handle)}</strong></span>
         </div>
         <div class="desktop-nav-actions">
@@ -510,6 +517,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         </div>
         <div class="badge-row">
           <span class="day-badge">#${ctx.dayNumber}</span>
+          <span class="theme-label"><span class="theme-swatch" aria-hidden="true"></span>${escapeHtml(dailyTheme.name)}</span>
           ${
             ctx.replay
               ? '<span class="replay-flag">↻ Replay · unranked</span>'
@@ -518,6 +526,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
                 : ''
           }
         </div>
+        <h1 class="scenario-title">${escapeHtml(ctx.title)}</h1>
         <div class="character-line">
           <span class="char-name">${escapeHtml(ctx.characterName)}</span>
           <span class="char-persona">${escapeHtml(ctx.characterPersona)}</span>
@@ -547,6 +556,7 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
           }</strong>
         </div>
         <div class="input-field">
+          <label class="sr-only" for="chat-input">Your offer or message</label>
           <input id="chat-input" type="text" placeholder="Type your offer or say something…" autocomplete="off" maxlength="${ctx.maxMessageChars}" />
           <span class="char-counter" id="char-counter">0/${ctx.maxMessageChars}</span>
         </div>
@@ -1050,6 +1060,7 @@ function loadLlmGame(
 /** Starts a fresh, unranked replay from a daily result card. */
 async function startReplay(root: HTMLElement, identity: DeviceIdentity): Promise<void> {
   clearGameRuntime();
+  applyDailyTheme(getDailyTheme(getDayNumber()));
   root.innerHTML = '<div class="loading">Starting your replay…</div>';
   const result = await startReplaySession(identity);
   if (!result.ok) {
@@ -1074,6 +1085,7 @@ async function startReplay(root: HTMLElement, identity: DeviceIdentity): Promise
  */
 async function playArchivedDay(root: HTMLElement, identity: DeviceIdentity, day: ArchiveDayEntry): Promise<void> {
   clearGameRuntime();
+  applyDailyTheme(getDailyTheme(day.day_number, { title: day.title }));
   root.innerHTML = `<div class="loading">Loading Talked Down #${day.day_number}\u2026</div>`;
   const result = await startArchiveSession(identity, day.day_number);
   if (!result.ok) {
@@ -1110,6 +1122,8 @@ function renderAlreadyPlayed(
   const resolvedReplayAvailableAtMs = Number.isFinite(replayAvailableAtMs)
     ? replayAvailableAtMs
     : Date.now() + REPLAY_COOLDOWN_MS;
+  const dailyTheme = getDailyTheme(effectiveDay);
+  applyDailyTheme(dailyTheme);
 
   root.innerHTML = `
     <div class="game">
@@ -1125,6 +1139,7 @@ function renderAlreadyPlayed(
         </div>
         <div class="badge-row">
           <span class="day-badge">#${effectiveDay}</span>
+          <span class="theme-label"><span class="theme-swatch" aria-hidden="true"></span>${escapeHtml(dailyTheme.name)}</span>
         </div>
         <h1 class="scenario-title">You\u2019ve already played today\u2019s negotiation.</h1>
         <div class="header-buttons" id="mobile-nav-menu">
@@ -1249,9 +1264,9 @@ async function main(): Promise<void> {
   if (!(root instanceof HTMLElement)) return;
 
   clearGameRuntime();
-  root.innerHTML = '<div class="loading">Loading today\u2019s negotiation…</div>';
-
   const dayNumber = getDayNumber();
+  applyDailyTheme(getDailyTheme(dayNumber));
+  root.innerHTML = '<div class="loading">Loading today\u2019s negotiation…</div>';
 
   // If this load carries a claim magic-link token, verify it BEFORE starting
   // the game session: verification may adopt the claimed identity into local
