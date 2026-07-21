@@ -29,6 +29,9 @@ var PLAYWRIGHT_GENERATOR = "playwright";
 var MAX_FULL_CYCLES = 3;
 var CANDIDATES_PER_CYCLE = 3;
 var RECENT_LIMIT = 14;
+var ALIEN_SOUVENIR_BACKFILL_DATE = "2026-07-21";
+var ALIEN_SOUVENIR_BACKFILL_TITLE = "The Alien Souvenir";
+var ALIEN_SOUVENIR_BACKFILL_ACTOR = "Zorblax";
 
 // Generated scenarios declare one domain from this server-owned catalog.
 // Validation checks the declaration against the story text and rejects domains
@@ -758,7 +761,7 @@ function createDraftScenario(app, targetDate, generated) {
 function attachActorPortraitBestEffort(app, scenario) {
   try {
     var existing = scenario.getString("actor_portrait");
-    if (existing) {
+    if (trimString(existing)) {
       return existing;
     }
 
@@ -793,6 +796,38 @@ function attachActorPortraitBestEffort(app, scenario) {
     logError(app, "nightly_playwright actor portrait unavailable for scenario " + (scenario && scenario.id ? scenario.id : "unknown") + ": " + err.message);
     return "";
   }
+}
+
+// One-off, tightly scoped backfill for the published 2026-07-21 scenario.
+// It only delegates to the normal portrait helper and never changes game content
+// or publication status. Repeated calls become no-ops as soon as the file exists.
+function backfillAlienSouvenirActorPortrait(app, currentDate) {
+  currentDate = validDateString(currentDate) ? currentDate : dateOffsetUTC(0);
+  if (currentDate !== ALIEN_SOUVENIR_BACKFILL_DATE) {
+    return { status: "skipped", reason: "outside_backfill_date", date: currentDate };
+  }
+
+  var scenario = findPublishedScenarioForDate(app, ALIEN_SOUVENIR_BACKFILL_DATE);
+  if (!scenario) {
+    return { status: "skipped", reason: "published_scenario_missing", date: ALIEN_SOUVENIR_BACKFILL_DATE };
+  }
+  if (
+    scenario.getString("title") !== ALIEN_SOUVENIR_BACKFILL_TITLE ||
+    scenario.getString("character_name") !== ALIEN_SOUVENIR_BACKFILL_ACTOR
+  ) {
+    return { status: "skipped", reason: "scenario_identity_mismatch", scenario_id: scenario.id, date: ALIEN_SOUVENIR_BACKFILL_DATE };
+  }
+
+  var existing = scenario.getString("actor_portrait");
+  if (trimString(existing)) {
+    return { status: "skipped", reason: "portrait_exists", scenario_id: scenario.id, date: ALIEN_SOUVENIR_BACKFILL_DATE };
+  }
+
+  var portrait = attachActorPortraitBestEffort(app, scenario);
+  if (!portrait) {
+    return { status: "failed", reason: "portrait_unavailable", scenario_id: scenario.id, date: ALIEN_SOUVENIR_BACKFILL_DATE };
+  }
+  return { status: "attached", scenario_id: scenario.id, date: ALIEN_SOUVENIR_BACKFILL_DATE, actor_portrait: portrait };
 }
 
 function retireScenario(app, scenario) {
@@ -1409,6 +1444,7 @@ module.exports = {
   tomorrowUTC: tomorrowUTC,
   validDateString: validDateString,
   runPlaywrightPipeline: runPlaywrightPipeline,
+  backfillAlienSouvenirActorPortrait: backfillAlienSouvenirActorPortrait,
   computeDailyRecap: computeDailyRecap,
   recordPipelineRun: recordPipelineRun,
   pipelineStatus: pipelineStatus,
@@ -1425,6 +1461,7 @@ module.exports = {
     buildDiversityJudgeMessages: buildDiversityJudgeMessages,
     selectDiverseScenarioCandidate: selectDiverseScenarioCandidate,
     buildActorPortraitPrompt: buildActorPortraitPrompt,
-    attachActorPortraitBestEffort: attachActorPortraitBestEffort
+    attachActorPortraitBestEffort: attachActorPortraitBestEffort,
+    backfillAlienSouvenirActorPortrait: backfillAlienSouvenirActorPortrait
   }
 };

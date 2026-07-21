@@ -1,5 +1,21 @@
 /// <reference path="../pb_data/types.d.ts" />
 
+// One-off production backfill. The cron is limited to July 21 and the helper
+// additionally requires the exact 2026 date, published scenario identity, and a
+// blank portrait. It runs within five minutes of deployment, unregisters itself
+// before making the single attempt, and remains a data-level no-op on restarts
+// after the portrait is saved.
+cronAdd("backfill_alien_souvenir_actor_portrait", "*/5 * 21 7 *", function() {
+  cronRemove("backfill_alien_souvenir_actor_portrait");
+  var playwright = require(__hooks + "/lib/playwright.js");
+  var result = playwright.backfillAlienSouvenirActorPortrait($app);
+  if (result.status === "attached") {
+    playwright.logInfo($app, "actor portrait backfill result: " + JSON.stringify(result));
+  } else if (result.status === "failed") {
+    playwright.logError($app, "actor portrait backfill result: " + JSON.stringify(result));
+  }
+});
+
 cronAdd("nightly_playwright", "0 2 * * *", function() {
   var playwright = require(__hooks + "/lib/playwright.js");
   var targetDate = playwright.tomorrowUTC();
