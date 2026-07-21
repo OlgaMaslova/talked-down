@@ -565,7 +565,6 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         <div class="desktop-brand">
           <img class="brand-logo" src="${logoUrl}" width="32" height="32" alt="" />
           <span class="brand-word">Talked Down</span>
-          <span class="desktop-theme"><span class="theme-swatch" aria-hidden="true"></span>${escapeHtml(dailyTheme.name)}</span>
           <span class="desktop-identity">Negotiating as <strong>${escapeHtml(ctx.identity.handle)}</strong></span>
         </div>
         <div class="desktop-nav-actions">
@@ -585,7 +584,6 @@ function renderGame(root: HTMLElement, ctx: GameContext): void {
         </div>
         <div class="badge-row">
           <span class="day-badge">#${ctx.dayNumber}</span>
-          <span class="theme-label"><span class="theme-swatch" aria-hidden="true"></span>${escapeHtml(dailyTheme.name)}</span>
           ${
             ctx.replay
               ? '<span class="replay-flag">↻ Replay · unranked</span>'
@@ -1212,7 +1210,6 @@ function renderAlreadyPlayed(
         </div>
         <div class="badge-row">
           <span class="day-badge">#${effectiveDay}</span>
-          <span class="theme-label"><span class="theme-swatch" aria-hidden="true"></span>${escapeHtml(dailyTheme.name)}</span>
         </div>
         <h1 class="scenario-title">You\u2019ve already played today\u2019s negotiation.</h1>
         <div class="header-buttons" id="mobile-nav-menu">
