@@ -40,6 +40,42 @@ cronAdd("nightly_playwright", "0 2 * * *", function() {
   }
 });
 
+// Every 15 minutes, offset from the nightly job, restore today's game only when
+// no published scenario exists. The pipeline repeats the same guard before it
+// generates, so normal days remain a lightweight data-level no-op.
+cronAdd("recover_current_day_playwright", "7,22,37,52 * * * *", function() {
+  var playwright = require(__hooks + "/lib/playwright.js");
+  var targetDate = new Date().toISOString().slice(0, 10);
+  var published;
+
+  try {
+    published = $app.findRecordsByFilter(
+      "scenarios",
+      "status = {:status} && scenario_date = {:date}",
+      "",
+      1,
+      0,
+      { status: "published", date: targetDate }
+    );
+  } catch (lookupErr) {
+    playwright.logError($app, "playwright recovery check error for " + targetDate + ": " + lookupErr.message);
+    return;
+  }
+
+  if (published && published.length) {
+    return;
+  }
+
+  try {
+    var result = playwright.runPlaywrightPipeline($app, targetDate, "recovery");
+    playwright.logInfo($app, "playwright recovery result: " + JSON.stringify(result));
+    playwright.recordPipelineRun($app, targetDate, "recovery", result, null, null);
+  } catch (err) {
+    playwright.logError($app, "playwright recovery error for " + targetDate + ": " + err.message);
+    playwright.recordPipelineRun($app, targetDate, "recovery", null, null, err.message);
+  }
+});
+
 // Public watchdog endpoint: booleans/dates/statuses only, no hidden data.
 routerAdd("GET", "/api/pipeline/status", function(e) {
   var playwright = require(__hooks + "/lib/playwright.js");
