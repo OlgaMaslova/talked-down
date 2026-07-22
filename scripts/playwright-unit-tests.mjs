@@ -54,7 +54,7 @@ function record(values) {
 
 const recentScenarioRecord = record({
   id: "recent-scenario",
-  title: "The Last Spare Reactor Core",
+  title: "Spare Reactor Core",
   character_name: "Mara Venn",
   character_persona: "a station mechanic beside a cargo bay",
   opening_message: "I can part with one reactor core, but not for scraps.",
@@ -99,7 +99,7 @@ check("history query failures stop generation", historyError.includes("recent sc
 
 const portraitPrompt = playwright.buildActorPortraitPrompt({
   ...recentScenarioRecord,
-  title: "The Last Spare Reactor Core",
+  title: "Spare Reactor Core",
   character_name: "Mara Venn",
   character_persona: "a station mechanic beside a cargo bay",
   opening_message: "I can part with one reactor core, but not for scraps.",
@@ -187,10 +187,11 @@ const generationMessages = playwright.buildGenerationMessages("2026-07-12", rece
 const generationPayload = JSON.parse(generationMessages[1].content);
 check("prompt includes server-owned domain catalog", generationPayload.allowed_domains.some((entry) => entry.key === "sports") && generationPayload.allowed_domains.some((entry) => entry.key === "fantasy"));
 check("prompt blocks classified recent domain", generationPayload.recent_domains_do_not_repeat.includes("industrial_transport"), generationPayload.recent_domains_do_not_repeat);
+check("prompt explicitly requires a 2–3-word public title", generationMessages[0].content.includes("public.title must be a concise 2–3-word label") && generationPayload.instruction.includes("public.title a concise 2–3-word label"), generationMessages);
 
 const validSportsScenario = {
   public: {
-    title: "The Coach's Training Program Offer",
+    title: "Training Program Offer",
     character_name: "Imani Cole",
     character_persona: "a veteran athletics coach at a city stadium",
     opening_message: "I can offer 200 crowns for your training program. Tell me why it is worth more.",
@@ -226,6 +227,36 @@ try {
 }
 check("new, truthful domain passes validation", validResult && validResult.secret && validResult.secret.domain === "sports", validResult);
 
+const conciseTitleScenario = JSON.parse(JSON.stringify(validSportsScenario));
+conciseTitleScenario.public.title = "Rush-made gown";
+let conciseTitleResult = null;
+try {
+  conciseTitleResult = playwright.normalizeAndValidateGenerated(conciseTitleScenario, recent);
+} catch (error) {
+  conciseTitleResult = error.message;
+}
+check("a valid 2-word title is accepted", conciseTitleResult && conciseTitleResult.public && conciseTitleResult.public.title === "Rush-made gown", conciseTitleResult);
+
+const oneWordTitleScenario = JSON.parse(JSON.stringify(validSportsScenario));
+oneWordTitleScenario.public.title = "Training";
+let oneWordTitleError = "";
+try {
+  playwright.normalizeAndValidateGenerated(oneWordTitleScenario, recent);
+} catch (error) {
+  oneWordTitleError = error.message;
+}
+check("a one-word title is rejected", oneWordTitleError.includes("public.title must be a concise 2–3-word label"), oneWordTitleError);
+
+const longTitleScenario = JSON.parse(JSON.stringify(validSportsScenario));
+longTitleScenario.public.title = "City Stadium Training Offer";
+let longTitleError = "";
+try {
+  playwright.normalizeAndValidateGenerated(longTitleScenario, recent);
+} catch (error) {
+  longTitleError = error.message;
+}
+check("a four-or-more-word title is rejected", longTitleError.includes("public.title must be a concise 2–3-word label"), longTitleError);
+
 const directYouScenario = JSON.parse(JSON.stringify(validSportsScenario));
 directYouScenario.public.opening_message = "You have shown strong results, but I can offer 200 crowns. Tell me why it is worth more.";
 let directYouResult = null;
@@ -257,7 +288,7 @@ check("a cycle can continue with one valid candidate", selectedOnly === onlyCand
 
 const repeatedDomainScenario = JSON.parse(JSON.stringify(validSportsScenario));
 repeatedDomainScenario.secret.domain = "industrial_transport";
-repeatedDomainScenario.public.title = "Cargo Mechanic Training Contract";
+repeatedDomainScenario.public.title = "Cargo Mechanic Contract";
 repeatedDomainScenario.public.character_persona = "a cargo mechanic at a harbor repair dock";
 repeatedDomainScenario.secret.item = "cargo mechanic training contract";
 let repeatedError = "";

@@ -402,12 +402,13 @@ function generatedScenarioSystemPrompt() {
     "Levers must rotate and sometimes INVERT expectations: e.g. character punishes flattery, wastes messages, respects bluntness, rewards silence/walkaway, or dislikes over-empathy. Never reuse the same solution.",
     "You may theme around season, holidays, or big cultural moments, but ONLY through archetypes such as 'the superstar striker on the eve of the final'. Never name real people, brands, franchises, teams, leagues, trademarked events, or copyrighted settings.",
     "Hidden parameters must explain how concessions are earned, what warms the character up, and what makes them walk away.",
+    "public.title must be a concise 2–3-word label. Count words as nonempty whitespace-delimited tokens, so 'Rush-made gown' is two words.",
     "public.player_brief is REQUIRED and must be TERSE — exactly this format, nothing more: line 1: one short sentence introducing the opponent (who they are). Line 2: 'You are <player identity>.' Line 3: 'Goal: <what to achieve>.' For price scenarios the Goal line MUST include the currency and the character's opening ask number (equal to secret.opening_price), e.g. 'Goal: buy the boat for as little as possible. Opening ask: 12,000 credits.' For non_price scenarios the Goal line states what to persuade the character to do. No extra sentences, no scene-setting, no lever hints (no behavior/temperament/what-works-on-them clues). Keep the whole brief under 280 characters.",
     "public.character_persona must be a SHORT NEUTRAL surface description only: identity, age, role, appearance, setting (e.g. 'a middle-aged Polish market vendor'). It must contain ZERO hints about behavior, temperament, likes/dislikes, patience, what works on them, or negotiation style — all of that belongs ONLY in secret.levers and secret.actor_notes. If a phrase would help a player guess a lever ('no patience for flattery', 'respects bluntness'), it must NOT appear in any public field.",
     "public.opening_message must be ONLY the character's own spoken words, first person, addressed to the player. NO narration, NO stage directions, NO scene-setting (never 'You stand before...'), NO third-person description of the character, and NO quotation marks — write the raw speech itself. Example of CORRECT: 'Access is a privilege, not a right. What do you offer in exchange for entry?'. Example of WRONG: 'You stand before Evelyn Thorne. \"Access is a privilege,\" she states.'",
     "Return JSON only with this exact top-level shape: {\"public\":{\"title\":string,\"character_name\":string,\"character_persona\":string,\"opening_message\":string,\"player_brief\":string},\"secret\":{\"domain\":string,\"frame\":\"buy\"|\"sell\"|\"defend\"|\"multi_issue\"|\"non_price\",\"direction\":\"buy\"|\"sell\"|null,\"item\":string,\"objective\":string,\"currency\":string|null,\"opening_price\":number|null,\"floor_price\":number|null,\"fair_price\":number|null,\"patience\":integer,\"max_turns\":integer,\"levers\":{\"rewards\":string[],\"punishes\":string[]},\"concession_style\":string,\"actor_notes\":string,\"scoring_config\":{\"max_score\":100,\"price_weight\":number,\"patience_weight\":number,\"turns_weight\":number}}}.",
     "For price scenarios: use positive numeric prices. If direction='sell', require 0 < floor_price <= fair_price <= opening_price. If direction='buy', require 0 < opening_price <= fair_price <= floor_price. For non_price, use null currency/opening_price/floor_price/fair_price and direction=null.",
-    "Keep public fields concise: title <=160 chars, character_name <=80, character_persona <=200, opening_message <=1000, player_brief <=280."
+    "Keep public fields concise: title exactly 2–3 words and <=160 chars, character_name <=80, character_persona <=200, opening_message <=1000, player_brief <=280."
   ].join("\n");
 }
 
@@ -431,7 +432,7 @@ function buildGenerationMessages(targetDate, recent, candidateNumber, cycle) {
     allowed_domains: allowedDomainPayload(),
     recent_domains_do_not_repeat: recentDomainKeys(recent, 5),
     recent_generated_scenarios: completeRecentScenarioPayload(recent),
-    instruction: "Create one playable scenario for tomorrow. Choose a truthful secret.domain from allowed_domains that is absent from recent_domains_do_not_repeat. Use the complete recent scenarios only as history: avoid their frame, lever, solution, setting, domain, protagonist, and premise patterns. If the most recent frame exists, choose a different frame."
+    instruction: "Create one playable scenario for tomorrow. Make public.title a concise 2–3-word label, counting nonempty whitespace-delimited tokens ('Rush-made gown' is two words). Choose a truthful secret.domain from allowed_domains that is absent from recent_domains_do_not_repeat. Use the complete recent scenarios only as history: avoid their frame, lever, solution, setting, domain, protagonist, and premise patterns. If the most recent frame exists, choose a different frame."
   };
   return [
     { role: "system", content: generatedScenarioSystemPrompt() },
@@ -475,6 +476,12 @@ function normalizeAndValidateGenerated(raw, recent) {
   pub.player_brief = trimString(pub.player_brief);
 
   if (!pub.title) { errors.push("public.title required"); }
+  if (pub.title) {
+    var titleWordCount = pub.title.split(/\s+/).length;
+    if (titleWordCount < 2 || titleWordCount > 3) {
+      errors.push("public.title must be a concise 2–3-word label (2 or 3 nonempty whitespace-delimited words)");
+    }
+  }
   if (!pub.character_name) { errors.push("public.character_name required"); }
   if (!pub.character_persona) { errors.push("public.character_persona required"); }
   if (!pub.opening_message) { errors.push("public.opening_message required"); }
