@@ -25,11 +25,38 @@
   --bubble-user: oklch(0.275 0.055 145);
   --ambience-primary: oklch(0.42 0.13 48 / 0.34);
   --ambience-secondary: oklch(0.38 0.1 145 / 0.2);
+  --ambience-tertiary: oklch(0.4 0.1 225 / 0.18);
   --surface-glint: oklch(0.88 0.08 48 / 0.08);
   --focus-ring: oklch(0.9 0.12 48);
   --shadow-color: oklch(0.04 0.018 48 / 0.62);
   --ambient-x: 72%;
   --ambient-y: 18%;
+  --body-background:
+    radial-gradient(circle at var(--ambient-x) var(--ambient-y), var(--ambience-primary) 0, transparent 38rem),
+    radial-gradient(circle at 10% 84%, var(--ambience-secondary) 0, transparent 34rem),
+    var(--bg);
+  --game-background:
+    radial-gradient(circle at var(--ambient-x) 0%, var(--surface-glint) 0, transparent 30rem),
+    var(--panel);
+  --header-background:
+    radial-gradient(circle at 88% -30%, var(--surface-glint) 0, transparent 17rem),
+    linear-gradient(180deg, var(--panel-2), var(--panel));
+  --chat-background: color-mix(in oklch, var(--panel) 94%, var(--accent-soft));
+  --composer-background: color-mix(in oklch, var(--panel-2) 92%, var(--accent-soft));
+  --topbar-background: color-mix(in oklch, var(--bg) 72%, var(--panel-2));
+  --title-color: var(--text);
+  --title-shadow: none;
+  --title-font: Georgia, 'Times New Roman', serif;
+  --title-weight: 700;
+  --title-style: normal;
+  --title-tracking: -0.018em;
+  --title-border-width: 0px;
+  --title-background: transparent;
+  --title-padding: 0;
+  --title-radius: 0px;
+  --title-line-width: 2.75rem;
+  --title-line-color: var(--accent-2);
+  --title-line-display: block;
   --font-body: 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-display: Georgia, 'Times New Roman', serif;
   --font-label: ui-monospace, 'SFMono-Regular', Consolas, monospace;
@@ -42,10 +69,7 @@ body {
 
 body {
   margin: 0;
-  background:
-    radial-gradient(circle at var(--ambient-x) var(--ambient-y), var(--ambience-primary) 0, transparent 38rem),
-    radial-gradient(circle at 10% 84%, var(--ambience-secondary) 0, transparent 34rem),
-    var(--bg);
+  background: var(--body-background);
   color: var(--text);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
@@ -70,9 +94,7 @@ body {
   max-height: 100dvh;
   display: flex;
   flex-direction: column;
-  background:
-    radial-gradient(circle at var(--ambient-x) 0%, var(--surface-glint) 0, transparent 30rem),
-    var(--panel);
+  background: var(--game-background);
   position: relative;
   box-shadow: 0 0 40px var(--shadow-color);
   overflow: hidden;
@@ -408,6 +430,7 @@ body {
 
 .chat-log {
   flex: 1 1 auto;
+  background: var(--chat-background);
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -2076,9 +2099,7 @@ body {
 /* ---------- Deterministic daily atmosphere ---------- */
 
 .game-header {
-  background:
-    radial-gradient(circle at 88% -30%, var(--surface-glint) 0, transparent 17rem),
-    linear-gradient(180deg, var(--panel-2), var(--panel));
+  background: var(--header-background);
 }
 
 .game-header::after {
@@ -2125,7 +2146,6 @@ body {
   display: none;
 }
 
-.scenario-title,
 .end-outcome,
 .end-score-number {
   font-family: var(--font-display);
@@ -2133,10 +2153,37 @@ body {
 }
 
 .scenario-title {
-  max-width: 28ch;
-  color: var(--text);
+  position: relative;
+  width: fit-content;
+  max-width: min(28ch, 100%);
+  margin: 0 0 0.7rem;
+  padding: var(--title-padding);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  color: var(--title-color);
+  border: var(--title-border-width) solid var(--border-strong);
+  border-radius: var(--title-radius);
+  background: var(--title-background);
+  font-family: var(--title-font);
+  font-style: var(--title-style);
+  font-weight: var(--title-weight);
   line-height: 1.18;
-  letter-spacing: -0.018em;
+  letter-spacing: var(--title-tracking);
+  text-shadow: var(--title-shadow);
+  text-wrap: balance;
+}
+
+.scenario-title::after {
+  content: '';
+  display: var(--title-line-display);
+  width: var(--title-line-width);
+  max-width: 100%;
+  height: 2px;
+  margin-top: 0.55rem;
+  background: var(--title-line-color);
+  border-radius: 999px;
+  opacity: 0.8;
 }
 
 .char-name,
@@ -2160,7 +2207,7 @@ body {
 
 .opener-chips,
 .input-row {
-  background: color-mix(in oklch, var(--panel-2) 92%, var(--accent-soft));
+  background: var(--composer-background);
 }
 
 .opener-chip:hover,
@@ -2238,7 +2285,7 @@ body {
 }
 
 .end-panel {
-  background: color-mix(in oklch, var(--bg) 90%, transparent);
+  background: var(--body-background);
   backdrop-filter: none;
 }
 
@@ -2251,6 +2298,11 @@ body {
 
 .end-score {
   border-color: var(--border-strong);
+}
+
+.end-outcome {
+  color: var(--title-color);
+  text-shadow: var(--title-shadow);
 }
 
 .end-score-number {
@@ -2304,21 +2356,16 @@ body {
 
 @media (min-width: 1024px) {
   body {
-    background:
-      radial-gradient(circle at var(--ambient-x) var(--ambient-y), var(--ambience-primary) 0, transparent 42rem),
-      radial-gradient(circle at 8% 88%, var(--ambience-secondary) 0, transparent 38rem),
-      var(--bg);
+    background: var(--body-background);
   }
 
   .game {
-    background:
-      radial-gradient(circle at var(--ambient-x) 8%, var(--surface-glint) 0, transparent 38rem),
-      var(--panel);
+    background: var(--game-background);
   }
 
   .desktop-topbar {
     border-color: var(--border);
-    background: color-mix(in oklch, var(--bg) 72%, var(--panel-2));
+    background: var(--topbar-background);
   }
 
   .desktop-theme {
@@ -2348,9 +2395,7 @@ body {
 
   .game-header {
     border-color: var(--border);
-    background:
-      radial-gradient(circle at 20% 0, var(--surface-glint) 0, transparent 20rem),
-      color-mix(in oklch, var(--bg) 54%, var(--panel));
+    background: var(--header-background);
   }
 
   .game-header::after {
@@ -2379,9 +2424,10 @@ body {
   }
 
   .scenario-title {
+    margin: 0 0 1.25rem;
     font-size: clamp(1.65rem, 2.2vw, 2.15rem);
-    font-weight: 650;
-    letter-spacing: -0.025em;
+    font-weight: var(--title-weight);
+    letter-spacing: var(--title-tracking);
   }
 
   .character-line {
@@ -2397,10 +2443,13 @@ body {
     color: var(--text-dim);
   }
 
-  .chat-log,
+  .chat-log {
+    background: var(--chat-background);
+  }
+
   .opener-chips,
   .input-row {
-    background: color-mix(in oklch, var(--panel) 94%, var(--accent-soft));
+    background: var(--composer-background);
   }
 
   .bubble {
@@ -2451,9 +2500,7 @@ body {
   }
 
   .end-panel {
-    background:
-      radial-gradient(circle at var(--ambient-x) var(--ambient-y), var(--ambience-primary) 0, transparent 38rem),
-      var(--bg);
+    background: var(--body-background);
   }
 
   .end-card {
