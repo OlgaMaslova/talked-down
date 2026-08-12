@@ -3,8 +3,9 @@
 // Master switch for the nightly generation pipeline. While false, neither the
 // nightly job nor the current-day recovery job generates or publishes anything;
 // already published scenarios stay live and the manual admin route still works.
-// Flip back to true (and redeploy) to resume daily generation.
-var PIPELINE_ENABLED = false;
+// Set to false (and redeploy) to pause daily generation; disable the schedule in
+// .github/workflows/nightly-watchdog.yml at the same time, or it alerts nightly.
+var PIPELINE_ENABLED = true;
 
 // One-off production backfill. The cron is limited to July 21 and the helper
 // additionally requires the exact 2026 date, published scenario identity, and a
