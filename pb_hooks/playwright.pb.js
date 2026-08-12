@@ -1,5 +1,11 @@
 /// <reference path="../pb_data/types.d.ts" />
 
+// Master switch for the nightly generation pipeline. While false, neither the
+// nightly job nor the current-day recovery job generates or publishes anything;
+// already published scenarios stay live and the manual admin route still works.
+// Flip back to true (and redeploy) to resume daily generation.
+var PIPELINE_ENABLED = false;
+
 // One-off production backfill. The cron is limited to July 21 and the helper
 // additionally requires the exact 2026 date, published scenario identity, and a
 // blank portrait. It runs within five minutes of deployment, unregisters itself
@@ -17,6 +23,11 @@ cronAdd("backfill_alien_souvenir_actor_portrait", "*/5 * 21 7 *", function() {
 });
 
 cronAdd("nightly_playwright", "0 2 * * *", function() {
+  if (!PIPELINE_ENABLED) {
+    console.log("nightly_playwright skipped: pipeline disabled");
+    return;
+  }
+
   var playwright = require(__hooks + "/lib/playwright.js");
   var targetDate = playwright.tomorrowUTC();
 
@@ -44,6 +55,10 @@ cronAdd("nightly_playwright", "0 2 * * *", function() {
 // no published scenario exists. The pipeline repeats the same guard before it
 // generates, so normal days remain a lightweight data-level no-op.
 cronAdd("recover_current_day_playwright", "7,22,37,52 * * * *", function() {
+  if (!PIPELINE_ENABLED) {
+    return;
+  }
+
   var playwright = require(__hooks + "/lib/playwright.js");
   var targetDate = new Date().toISOString().slice(0, 10);
   var published;

@@ -10,9 +10,13 @@
 # issue assigned to the repo owner (Olga), which triggers a notification.
 name: nightly-watchdog
 
+# The nightly schedule is disabled while generation is paused
+# (PIPELINE_ENABLED = false in pb_hooks/playwright.pb.js); with no new scenario
+# published, this check would fail every night and open a breakage issue.
+# Re-enable the schedule below at the same time generation is resumed.
 on:
-  schedule:
-    - cron: "30 3 * * *" # 90 min after the 02:00 UTC pipeline run
+  # schedule:
+  #   - cron: "30 3 * * *" # 90 min after the 02:00 UTC pipeline run
   workflow_dispatch: {}
 
 permissions:
