@@ -1,0 +1,210 @@
+#!/usr/bin/env node
+// Session-data analysis for Talked Down.
+//
+// Pulls live play data (scores, sessions, incidents) from the PocketBase
+// backend via superuser auth and generates a markdown report covering:
+//   - score distribution (per day + overall, result-label buckets)
+//   - drop-off (abandoned sessions, quit turn)
+//   - message counts (player turns vs the cap)
+//   - transcript patterns (tactics used, what correlates with deals)
+//
+// Usage:
+//   POCKETBASE_URL=https://... ADMIN_EMAIL=... ADMIN_PASSWORD=... \
+//     node scripts/analyze-sessions.mjs [--out docs/session-analysis-YYYY-MM-DD.md]
+
+const BASE = process.env.POCKETBASE_URL || "https://sn-pb-repo-1292607600-93600e.fly.dev";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const today = new Date().toISOString().slice(0, 10);
+const OUT = process.argv.includes("--out")
+  ? process.argv[process.argv.indexOf("--out") + 1]
+  : `docs/session-analysis-${today}.md`;
+
+if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+  console.error("ADMIN_EMAIL and ADMIN_PASSWORD are required");
+  process.exit(1);
+}
+
+async function api(path, token) {
+  const res = await fetch(BASE + path, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: token } : {}),
+    },
+  });
+  if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
+  return res.json();
+}
+
+async function adminToken() {
+  const res = await fetch(BASE + "/api/collections/_superusers/auth-with-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identity: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+  });
+  if (!res.ok) throw new Error("admin auth failed: " + res.status);
+  return (await res.json()).token;
+}
+
+async function fetchAll(collection, token, extra = "") {
+  const items = [];
+  let page = 1;
+  for (;;) {
+    const data = await api(
+      `/api/collections/${collection}/records?perPage=200&page=${page}${extra}`,
+      token
+    );
+    items.push(...data.items);
+    if (page >= data.totalPages) break;
+    page++;
+  }
+  return items;
+}
+
+const median = (xs) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const fmt = (n) => (n == null ? "—" : Math.round(n * 10) / 10);
+
+function parseJSON(v) {
+  if (v == null) return null;
+  if (typeof v === "object") return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+}
+
+const TACTICS = [
+  ["flattery", /\b(beautiful|lovely|amazing|great|wonderful|kind|generous|nice|love|respect)\b/i],
+  ["hostility", /\b(stupid|idiot|scam|ridiculous|rip.?off|insult|joke|trash|garbage)\b/i],
+  ["logic", /\b(because|market|worth|fair|compar|elsewhere|budget|value|cost)\b/i],
+  ["walkaway", /\b(walk away|leave|forget it|no thanks|goodbye|last offer|final)\b/i],
+];
+
+function playerMessages(transcript) {
+  const t = parseJSON(transcript);
+  if (!Array.isArray(t)) return [];
+  return t
+    .filter((m) => m && (m.role === "player" || m.role === "user"))
+    .map((m) => String(m.message || m.content || m.text || ""));
+}
+
+async function main() {
+  const token = await adminToken();
+  const [scores, sessions, incidents] = await Promise.all([
+    fetchAll("scores", token),
+    fetchAll("sessions", token),
+    fetchAll("incidents", token).catch(() => []),
+  ]);
+
+  // --- score distribution ---
+  const byDay = new Map();
+  for (const s of scores) {
+    const day = s.day || (s.day_number != null ? `day #${s.day_number}` : "unknown");
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(s);
+  }
+  const labels = new Map();
+  for (const s of scores) labels.set(s.result_label || "?", (labels.get(s.result_label || "?") || 0) + 1);
+
+  // --- drop-off / message counts / tactics ---
+  let abandoned = 0,
+    deals = 0,
+    noDeals = 0;
+  const quitTurns = [],
+    msgCounts = [],
+    msgLens = [];
+  const tacticStats = Object.fromEntries(TACTICS.map(([n]) => [n, { sessions: 0, deals: 0 }]));
+  for (const sess of sessions) {
+    const msgs = playerMessages(sess.transcript);
+    msgCounts.push(msgs.length);
+    for (const m of msgs) msgLens.push(m.length);
+    if (sess.status === "deal") deals++;
+    else if (sess.status === "no_deal") noDeals++;
+    else {
+      abandoned++;
+      quitTurns.push(msgs.length);
+    }
+    const joined = msgs.join("\n");
+    for (const [name, re] of TACTICS) {
+      if (re.test(joined)) {
+        tacticStats[name].sessions++;
+        if (sess.status === "deal") tacticStats[name].deals++;
+      }
+    }
+  }
+
+  const lines = [];
+  lines.push(`# Talked Down — Session Data Analysis (${today})`);
+  lines.push("");
+  lines.push(`Backend: ${BASE} · generated by \`scripts/analyze-sessions.mjs\``);
+  lines.push("");
+  lines.push("## Overview");
+  lines.push("");
+  lines.push(`- Sessions: **${sessions.length}** (deals ${deals}, no-deals ${noDeals}, abandoned/active ${abandoned})`);
+  lines.push(`- Scored plays: **${scores.length}**`);
+  lines.push(`- Incidents flagged: **${incidents.length}**`);
+  lines.push("");
+  lines.push("## Score distribution");
+  lines.push("");
+  const allScores = scores.map((s) => s.score).filter((x) => typeof x === "number");
+  lines.push(`- Overall: n=${allScores.length}, min=${fmt(Math.min(...allScores))}, median=${fmt(median(allScores))}, mean=${fmt(mean(allScores))}, max=${fmt(Math.max(...allScores))}`);
+  for (const [day, rows] of [...byDay.entries()].sort()) {
+    const xs = rows.map((r) => r.score).filter((x) => typeof x === "number");
+    lines.push(`- ${day}: n=${xs.length}, median=${fmt(median(xs))}, best=${xs.length ? Math.max(...xs) : "—"}`);
+  }
+  lines.push("");
+  lines.push("Result labels:");
+  for (const [label, n] of [...labels.entries()].sort((a, b) => b[1] - a[1])) lines.push(`- ${label}: ${n}`);
+  lines.push("");
+  lines.push("## Drop-off");
+  lines.push("");
+  const startRate = sessions.length ? Math.round((100 * (deals + noDeals)) / sessions.length) : 0;
+  lines.push(`- ${startRate}% of started sessions reach an ending (deal or no-deal); ${abandoned} abandoned.`);
+  if (quitTurns.length) lines.push(`- Abandoners quit after a median of ${fmt(median(quitTurns))} player messages.`);
+  lines.push("");
+  lines.push("## Message counts");
+  lines.push("");
+  lines.push(`- Player messages per session: median=${fmt(median(msgCounts))}, mean=${fmt(mean(msgCounts))}, max=${msgCounts.length ? Math.max(...msgCounts) : "—"}`);
+  lines.push(`- Message length (chars): median=${fmt(median(msgLens))}, max=${msgLens.length ? Math.max(...msgLens) : "—"} (cap 280)`);
+  lines.push("");
+  lines.push("## Transcript patterns (tactics)");
+  lines.push("");
+  for (const [name, st] of Object.entries(tacticStats)) {
+    const rate = st.sessions ? Math.round((100 * st.deals) / st.sessions) : 0;
+    lines.push(`- ${name}: used in ${st.sessions} sessions, ${st.deals} deals (${rate}% deal rate)`);
+  }
+  lines.push("");
+  if (incidents.length) {
+    lines.push("## Incidents");
+    lines.push("");
+    const byType = new Map();
+    for (const i of incidents) byType.set(i.type, (byType.get(i.type) || 0) + 1);
+    for (const [t, n] of byType) lines.push(`- ${t}: ${n}`);
+    lines.push("");
+  }
+  lines.push("## Suggested next improvements");
+  lines.push("");
+  if (allScores.length && median(allScores) < 40) lines.push("- Median score is low — consider softening concession ladders on the hardest scenarios.");
+  if (allScores.length && median(allScores) > 80) lines.push("- Median score is high — scenarios may be too easy; tighten floors or patience.");
+  if (abandoned > deals + noDeals) lines.push("- Abandonment exceeds completions — investigate early-turn friction (opening message clarity, input UX).");
+  if (msgCounts.length && median(msgCounts) >= 0.9 * 15) lines.push("- Players regularly hit the message cap — consider raising it or tuning pacing.");
+  if (lines[lines.length - 1] === "") lines.push("- No automatic flags this run; review tactic deal-rates above for prompt-tuning ideas.");
+  lines.push("");
+
+  const fs = await import("node:fs");
+  fs.mkdirSync("docs", { recursive: true });
+  fs.writeFileSync(OUT, lines.join("\n"));
+  console.log(`Wrote ${OUT} (${sessions.length} sessions, ${scores.length} scores, ${incidents.length} incidents)`);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
