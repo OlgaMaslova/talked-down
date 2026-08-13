@@ -27,7 +27,7 @@ jobs:
         id: status
         run: |
           set -euo pipefail
-          BODY=$(curl -sS --max-time 30 https://sn-pb-repo-1292607600-93600e.fly.dev/api/pipeline/status || echo '{"ok":false,"error":"unreachable"}')
+          BODY=$(curl -sS --max-time 30 https://sn-pb-repo-1292607600-d50858.fly.dev/api/pipeline/status || echo '{"ok":false,"error":"unreachable"}')
           echo "body=$BODY" >> "$GITHUB_OUTPUT"
           echo "Pipeline status: $BODY"
           OK=$(echo "$BODY" | jq -r '.ok // false')

@@ -12,7 +12,7 @@
 //   POCKETBASE_URL=https://... ADMIN_EMAIL=... ADMIN_PASSWORD=... \
 //     node scripts/analyze-sessions.mjs [--out docs/session-analysis-YYYY-MM-DD.md]
 
-const BASE = process.env.POCKETBASE_URL || "https://sn-pb-repo-1292607600-93600e.fly.dev";
+const BASE = process.env.POCKETBASE_URL || "https://sn-pb-repo-1292607600-d50858.fly.dev";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const today = new Date().toISOString().slice(0, 10);
