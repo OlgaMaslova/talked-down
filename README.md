@@ -113,7 +113,7 @@ polls the public `GET /api/pipeline/status` endpoint 90 minutes after the nightl
 run, opening a GitHub issue on breakage.
 
 > **Kill switch.** `PIPELINE_ENABLED` in
-> [pb_hooks/lib/playwright.js](pb_hooks/lib/playwright.js#L36) gates both crons.
+> [pb_hooks/lib/playwright.js](pb_hooks/lib/playwright.js#L38) gates both crons.
 > Set it to `false` and redeploy to pause generation — already-published
 > scenarios stay playable, and the admin route below still works. The status
 > endpoint reports the flag, so the watchdog stays quiet during a deliberate
