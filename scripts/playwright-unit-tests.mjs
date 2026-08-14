@@ -309,5 +309,26 @@ try {
 }
 check("declared domain must match story text", falseDomainError.includes("secret.domain does not match the scenario text"), falseDomainError);
 
+// PocketBase executes every cron/route handler in its own isolated JSVM
+// runtime, so a handler cannot see variables declared at the top of its hook
+// file — the reference throws a ReferenceError and the handler dies silently.
+// A kill switch written that way once stopped nightly generation for two days
+// while looking exactly like an intentional pause, so guard the whole pattern:
+// hook files must keep shared state in lib/ and require() it inside handlers.
+import { readdirSync, readFileSync } from "node:fs";
+const hooksDir = join(here, "../pb_hooks");
+for (const file of readdirSync(hooksDir).filter((name) => name.endsWith(".pb.js"))) {
+  const source = readFileSync(join(hooksDir, file), "utf8");
+  const declarations = source
+    .split("\n")
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter(({ line }) => /^(var|let|const)\s/.test(line));
+  check(
+    `${file} declares no file-scope state (unreachable from handlers)`,
+    declarations.length === 0,
+    declarations.map(({ line, number }) => `${number}: ${line.trim()}`).join(" | ")
+  );
+}
+
 console.log(failures ? `\n${failures} FAILURES` : "\nall tests passed");
 process.exit(failures ? 1 : 0);

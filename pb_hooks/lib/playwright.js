@@ -25,6 +25,18 @@ Generated scenario_secrets.secret_spec shape follows actor.pb.js:
 }
 */
 
+// Master switch for the nightly generation pipeline. While false, neither the
+// nightly job nor the current-day recovery job generates or publishes anything;
+// already published scenarios stay live and the manual admin route still works.
+// Set to false and redeploy to pause generation.
+//
+// It lives in this module, NOT at the top of playwright.pb.js, because
+// PocketBase executes every cron/route handler in its own isolated JSVM
+// runtime: a handler cannot see variables declared in the enclosing hook file,
+// and referencing one throws a ReferenceError that kills the handler. Handlers
+// read it through the module they already require() inside their own body.
+var PIPELINE_ENABLED = true;
+
 var PLAYWRIGHT_GENERATOR = "playwright";
 var MAX_FULL_CYCLES = 3;
 var CANDIDATES_PER_CYCLE = 3;
@@ -1363,10 +1375,11 @@ function recordPipelineRun(app, targetDate, source, result, recap, errorMessage)
 
 // Public health status for the external watchdog. Exposes only booleans,
 // dates, and run statuses — never scenario secrets or hidden params.
-// `build` describes the running deployment (kill-switch state, boot time,
-// commit when the platform provides one), so "did my deploy land?" is one
-// request rather than an inference from record timestamps.
-function pipelineStatus(app, build) {
+// `build` describes the running deployment (kill-switch state, and the commit
+// when the platform provides one), so "did my deploy land, and is the switch on
+// in the build that is actually live?" is one request rather than an inference
+// from record timestamps.
+function pipelineStatus(app) {
   var today = dateOffsetUTC(0);
   var tomorrow = tomorrowUTC();
   var todayReady = !!findPublishedScenarioForDate(app, today);
@@ -1405,8 +1418,7 @@ function pipelineStatus(app, build) {
     build: {
       // false means the crons are deliberately skipping; a missing scenario is
       // then an expected consequence of the pause, not a pipeline failure.
-      pipeline_enabled: !build || build.pipeline_enabled !== false,
-      booted_at: (build && build.booted_at) || null,
+      pipeline_enabled: PIPELINE_ENABLED,
       commit: env("SUPERNAUT_COMMIT") || env("SOURCE_COMMIT") || env("GIT_COMMIT") || null
     }
   };
@@ -1465,6 +1477,7 @@ module.exports = {
   computeDailyRecap: computeDailyRecap,
   recordPipelineRun: recordPipelineRun,
   pipelineStatus: pipelineStatus,
+  PIPELINE_ENABLED: PIPELINE_ENABLED,
   getBody: getBody,
   getHeader: getHeader,
   logInfo: logInfo,
