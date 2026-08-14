@@ -113,11 +113,23 @@ polls the public `GET /api/pipeline/status` endpoint 90 minutes after the nightl
 run, opening a GitHub issue on breakage.
 
 > **Kill switch.** `PIPELINE_ENABLED` in
-> [pb_hooks/playwright.pb.js](pb_hooks/playwright.pb.js#L3) gates both crons.
+> [pb_hooks/playwright.pb.js](pb_hooks/playwright.pb.js#L8) gates both crons.
 > Set it to `false` and redeploy to pause generation — already-published
-> scenarios stay playable, and the admin route below still works. Comment out
-> the watchdog schedule at the same time, or it opens a breakage issue every
-> night for a pause you asked for.
+> scenarios stay playable, and the admin route below still works. The status
+> endpoint reports the flag, so the watchdog stays quiet during a deliberate
+> pause and still alerts if a day ends up with no game.
+
+Because the switch only takes effect once the machine is redeployed, the status
+endpoint reports what is actually *running*:
+
+```json
+"build": { "pipeline_enabled": true, "booted_at": "2026-08-14T06:12:03Z", "commit": null }
+```
+
+`booted_at` is stamped when PocketBase evaluates the hooks, so it changes on
+every deploy — the one-request answer to "did my deploy land, and is the switch
+on in the build that's live?". `commit` is populated when the platform provides
+`SUPERNAUT_COMMIT`, `SOURCE_COMMIT`, or `GIT_COMMIT` in the environment.
 
 Generation can always be driven by hand with the superuser route
 `POST /api/admin/run-playwright` (`{ "date": "YYYY-MM-DD", "force": true }`).

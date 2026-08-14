@@ -7,6 +7,12 @@
 // .github/workflows/nightly-watchdog.yml at the same time, or it alerts nightly.
 var PIPELINE_ENABLED = true;
 
+// Boot marker. Hook files are evaluated once when PocketBase starts, so this is
+// the moment the running build came up — reported by /api/pipeline/status so a
+// deploy can be confirmed from outside instead of inferred from record
+// timestamps. Paired with pipeline_enabled it answers "is the fix live yet?".
+var BOOTED_AT = new Date().toISOString();
+
 // One-off production backfill. The cron is limited to July 21 and the helper
 // additionally requires the exact 2026 date, published scenario identity, and a
 // blank portrait. It runs within five minutes of deployment, unregisters itself
@@ -96,7 +102,10 @@ cronAdd("recover_current_day_playwright", "7,22,37,52 * * * *", function() {
 routerAdd("GET", "/api/pipeline/status", function(e) {
   var playwright = require(__hooks + "/lib/playwright.js");
   try {
-    return e.json(200, playwright.pipelineStatus(e.app));
+    return e.json(200, playwright.pipelineStatus(e.app, {
+      pipeline_enabled: PIPELINE_ENABLED,
+      booted_at: BOOTED_AT,
+    }));
   } catch (err) {
     return e.json(500, { ok: false, error: "status_failed" });
   }

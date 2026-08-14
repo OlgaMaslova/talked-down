@@ -1363,7 +1363,10 @@ function recordPipelineRun(app, targetDate, source, result, recap, errorMessage)
 
 // Public health status for the external watchdog. Exposes only booleans,
 // dates, and run statuses — never scenario secrets or hidden params.
-function pipelineStatus(app) {
+// `build` describes the running deployment (kill-switch state, boot time,
+// commit when the platform provides one), so "did my deploy land?" is one
+// request rather than an inference from record timestamps.
+function pipelineStatus(app, build) {
   var today = dateOffsetUTC(0);
   var tomorrow = tomorrowUTC();
   var todayReady = !!findPublishedScenarioForDate(app, today);
@@ -1398,7 +1401,14 @@ function pipelineStatus(app) {
     tomorrow_scenario_ready: tomorrowReady,
     recap_date: recapDate,
     recap_ready: recapReady,
-    last_run: lastRun
+    last_run: lastRun,
+    build: {
+      // false means the crons are deliberately skipping; a missing scenario is
+      // then an expected consequence of the pause, not a pipeline failure.
+      pipeline_enabled: !build || build.pipeline_enabled !== false,
+      booted_at: (build && build.booted_at) || null,
+      commit: env("SUPERNAUT_COMMIT") || env("SOURCE_COMMIT") || env("GIT_COMMIT") || null
+    }
   };
 }
 
