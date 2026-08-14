@@ -407,7 +407,7 @@ function generatedScenarioSystemPrompt() {
   return [
     "You are PLAYWRIGHT for Talked Down, a daily negotiation game where the player wins by chatting with an AI-played character and negotiating the best possible outcome (price, terms, or persuasion) before the character's patience or the turn limit runs out.",
     "Your job: invent exactly one fresh, playable, fair scenario for the requested UTC date — setting, fictional character personality, opening line, and the hidden negotiation parameters the actor and scorer will use.",
-    "Variety is mandatory. Rotate frames among: buy, sell, defend, multi_issue, non_price — BUT heavily favor amount/price negotiations: roughly 5 out of every 6 scenarios must be a priced frame (buy, sell, or defend with a concrete opening price the player haggles over). Use non_price or multi_issue only occasionally (about 1 in 6), and never two non-priced days in a row.",
+    "Variety matters. Prefer rotating frames among: buy, sell, defend, multi_issue, non_price — BUT heavily favor amount/price negotiations: roughly 5 out of every 6 scenarios must be a priced frame (buy, sell, or defend with a concrete opening price the player haggles over). Use non_price or multi_issue only occasionally (about 1 in 6), and never two non-priced days in a row.",
     "Rotate the setting/profession/domain every day across wildly different worlds. Choose secret.domain from the allowed_domains supplied in the user context. The domain must truthfully describe the scenario and must not appear in recent_domains_do_not_repeat. NEVER reuse or closely echo a theme, item, or setting that appears in the complete recent scenarios supplied in the user context.",
     "Frame meanings are from the PLAYER'S story: buy = player buys from character; sell = player sells to character; defend = player defends their own position; multi_issue = trading terms beats grinding price; non_price = persuasion without money, e.g. talk a dragon into letting you pass.",
     "The secret direction is the CHARACTER'S price side: direction='sell' when the character is selling and cannot accept below floor_price; direction='buy' when the character is buying and cannot pay above floor_price; direction=null only for non_price.",
@@ -444,7 +444,7 @@ function buildGenerationMessages(targetDate, recent, candidateNumber, cycle) {
     allowed_domains: allowedDomainPayload(),
     recent_domains_do_not_repeat: recentDomainKeys(recent, 5),
     recent_generated_scenarios: completeRecentScenarioPayload(recent),
-    instruction: "Create one playable scenario for tomorrow. Make public.title a concise 2–3-word label, counting nonempty whitespace-delimited tokens ('Rush-made gown' is two words). Choose a truthful secret.domain from allowed_domains that is absent from recent_domains_do_not_repeat. Use the complete recent scenarios only as history: avoid their frame, lever, solution, setting, domain, protagonist, and premise patterns. If the most recent frame exists, choose a different frame."
+    instruction: "Create one playable scenario for tomorrow. Make public.title a concise 2–3-word label, counting nonempty whitespace-delimited tokens ('Rush-made gown' is two words). Choose a truthful secret.domain from allowed_domains that is absent from recent_domains_do_not_repeat. Use the complete recent scenarios only as history: avoid their lever, solution, setting, domain, protagonist, and premise patterns. Prefer a different frame from the most recent scenario when it still yields the strongest fresh, playable scenario."
   };
   return [
     { role: "system", content: generatedScenarioSystemPrompt() },
@@ -655,9 +655,9 @@ function normalizeAndValidateGenerated(raw, recent) {
   secret.scoring_config.turns_weight = numberOrNull(secret.scoring_config.turns_weight);
 
   if (recent && recent.length) {
-    if (recent[0].frame && secret.frame === recent[0].frame) {
-      errors.push("frame repeats the most recent generated scenario");
-    }
+    // Frame rotation improves variety, but it must not turn an otherwise fresh
+    // daily game into an outage. Domain, premise, and lever repetition remain
+    // server-enforced above; a consecutive frame is only a soft preference.
     var sig = leverSignature(secret.levers);
     for (var i = 0; i < recent.length; i++) {
       if (sig && sig === leverSignature(recent[i].levers)) {
