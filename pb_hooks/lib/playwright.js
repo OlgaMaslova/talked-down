@@ -25,6 +25,18 @@ Generated scenario_secrets.secret_spec shape follows actor.pb.js:
 }
 */
 
+// Master switch for the nightly generation pipeline. While false, neither the
+// nightly job nor the current-day recovery job generates or publishes anything;
+// already published scenarios stay live and the manual admin route still works.
+// Set to false and redeploy to pause generation.
+//
+// It lives in this module, NOT at the top of playwright.pb.js, because
+// PocketBase executes every cron/route handler in its own isolated JSVM
+// runtime: a handler cannot see variables declared in the enclosing hook file,
+// and referencing one throws a ReferenceError that kills the handler. Handlers
+// read it through the module they already require() inside their own body.
+var PIPELINE_ENABLED = true;
+
 var PLAYWRIGHT_GENERATOR = "playwright";
 var MAX_FULL_CYCLES = 3;
 var CANDIDATES_PER_CYCLE = 3;
@@ -395,7 +407,7 @@ function generatedScenarioSystemPrompt() {
   return [
     "You are PLAYWRIGHT for Talked Down, a daily negotiation game where the player wins by chatting with an AI-played character and negotiating the best possible outcome (price, terms, or persuasion) before the character's patience or the turn limit runs out.",
     "Your job: invent exactly one fresh, playable, fair scenario for the requested UTC date — setting, fictional character personality, opening line, and the hidden negotiation parameters the actor and scorer will use.",
-    "Variety is mandatory. Rotate frames among: buy, sell, defend, multi_issue, non_price — BUT heavily favor amount/price negotiations: roughly 5 out of every 6 scenarios must be a priced frame (buy, sell, or defend with a concrete opening price the player haggles over). Use non_price or multi_issue only occasionally (about 1 in 6), and never two non-priced days in a row.",
+    "Variety matters. Prefer rotating frames among: buy, sell, defend, multi_issue, non_price — BUT heavily favor amount/price negotiations: roughly 5 out of every 6 scenarios must be a priced frame (buy, sell, or defend with a concrete opening price the player haggles over). Use non_price or multi_issue only occasionally (about 1 in 6), and never two non-priced days in a row.",
     "Rotate the setting/profession/domain every day across wildly different worlds. Choose secret.domain from the allowed_domains supplied in the user context. The domain must truthfully describe the scenario and must not appear in recent_domains_do_not_repeat. NEVER reuse or closely echo a theme, item, or setting that appears in the complete recent scenarios supplied in the user context.",
     "Frame meanings are from the PLAYER'S story: buy = player buys from character; sell = player sells to character; defend = player defends their own position; multi_issue = trading terms beats grinding price; non_price = persuasion without money, e.g. talk a dragon into letting you pass.",
     "The secret direction is the CHARACTER'S price side: direction='sell' when the character is selling and cannot accept below floor_price; direction='buy' when the character is buying and cannot pay above floor_price; direction=null only for non_price.",
@@ -432,7 +444,7 @@ function buildGenerationMessages(targetDate, recent, candidateNumber, cycle) {
     allowed_domains: allowedDomainPayload(),
     recent_domains_do_not_repeat: recentDomainKeys(recent, 5),
     recent_generated_scenarios: completeRecentScenarioPayload(recent),
-    instruction: "Create one playable scenario for tomorrow. Make public.title a concise 2–3-word label, counting nonempty whitespace-delimited tokens ('Rush-made gown' is two words). Choose a truthful secret.domain from allowed_domains that is absent from recent_domains_do_not_repeat. Use the complete recent scenarios only as history: avoid their frame, lever, solution, setting, domain, protagonist, and premise patterns. If the most recent frame exists, choose a different frame."
+    instruction: "Create one playable scenario for tomorrow. Make public.title a concise 2–3-word label, counting nonempty whitespace-delimited tokens ('Rush-made gown' is two words). Choose a truthful secret.domain from allowed_domains that is absent from recent_domains_do_not_repeat. Use the complete recent scenarios only as history: avoid their lever, solution, setting, domain, protagonist, and premise patterns. Prefer a different frame from the most recent scenario when it still yields the strongest fresh, playable scenario."
   };
   return [
     { role: "system", content: generatedScenarioSystemPrompt() },
@@ -643,9 +655,9 @@ function normalizeAndValidateGenerated(raw, recent) {
   secret.scoring_config.turns_weight = numberOrNull(secret.scoring_config.turns_weight);
 
   if (recent && recent.length) {
-    if (recent[0].frame && secret.frame === recent[0].frame) {
-      errors.push("frame repeats the most recent generated scenario");
-    }
+    // Frame rotation improves variety, but it must not turn an otherwise fresh
+    // daily game into an outage. Domain, premise, and lever repetition remain
+    // server-enforced above; a consecutive frame is only a soft preference.
     var sig = leverSignature(secret.levers);
     for (var i = 0; i < recent.length; i++) {
       if (sig && sig === leverSignature(recent[i].levers)) {
@@ -1363,6 +1375,10 @@ function recordPipelineRun(app, targetDate, source, result, recap, errorMessage)
 
 // Public health status for the external watchdog. Exposes only booleans,
 // dates, and run statuses — never scenario secrets or hidden params.
+// `build` describes the running deployment (kill-switch state, and the commit
+// when the platform provides one), so "did my deploy land, and is the switch on
+// in the build that is actually live?" is one request rather than an inference
+// from record timestamps.
 function pipelineStatus(app) {
   var today = dateOffsetUTC(0);
   var tomorrow = tomorrowUTC();
@@ -1398,7 +1414,13 @@ function pipelineStatus(app) {
     tomorrow_scenario_ready: tomorrowReady,
     recap_date: recapDate,
     recap_ready: recapReady,
-    last_run: lastRun
+    last_run: lastRun,
+    build: {
+      // false means the crons are deliberately skipping; a missing scenario is
+      // then an expected consequence of the pause, not a pipeline failure.
+      pipeline_enabled: PIPELINE_ENABLED,
+      commit: env("SUPERNAUT_COMMIT") || env("SOURCE_COMMIT") || env("GIT_COMMIT") || null
+    }
   };
 }
 
@@ -1455,6 +1477,7 @@ module.exports = {
   computeDailyRecap: computeDailyRecap,
   recordPipelineRun: recordPipelineRun,
   pipelineStatus: pipelineStatus,
+  PIPELINE_ENABLED: PIPELINE_ENABLED,
   getBody: getBody,
   getHeader: getHeader,
   logInfo: logInfo,

@@ -113,11 +113,33 @@ polls the public `GET /api/pipeline/status` endpoint 90 minutes after the nightl
 run, opening a GitHub issue on breakage.
 
 > **Kill switch.** `PIPELINE_ENABLED` in
-> [pb_hooks/playwright.pb.js](pb_hooks/playwright.pb.js#L3) gates both crons.
+> [pb_hooks/lib/playwright.js](pb_hooks/lib/playwright.js#L38) gates both crons.
 > Set it to `false` and redeploy to pause generation — already-published
-> scenarios stay playable, and the admin route below still works. Comment out
-> the watchdog schedule at the same time, or it opens a breakage issue every
-> night for a pause you asked for.
+> scenarios stay playable, and the admin route below still works. The status
+> endpoint reports the flag, so the watchdog stays quiet during a deliberate
+> pause and still alerts if a day ends up with no game.
+
+Because the switch only takes effect once the machine is redeployed, the status
+endpoint reports what is actually *running*:
+
+```json
+"build": { "pipeline_enabled": true, "commit": null }
+```
+
+The presence of `build` at all means the machine is on a build from 2026-08-14
+or later, and `pipeline_enabled` is the switch as it exists *in the running
+code* — the one-request answer to "did my deploy land?". `commit` is populated
+when the platform provides `SUPERNAUT_COMMIT`, `SOURCE_COMMIT`, or `GIT_COMMIT`
+in the environment.
+
+> **Handler isolation — the rule that bites hardest here.** PocketBase runs
+> every `cronAdd`/`routerAdd`/`onRecord*` handler in its own isolated JSVM
+> runtime. Handlers cannot see variables declared at the top of their hook file;
+> referencing one throws a `ReferenceError` and the handler dies producing
+> nothing — which looks exactly like a cron that chose not to run. Keep shared
+> state in `pb_hooks/lib/` and `require()` it *inside* each handler, as every
+> handler in this repo does. `scripts/playwright-unit-tests.mjs` fails the build
+> if a `.pb.js` file declares file-scope state.
 
 Generation can always be driven by hand with the superuser route
 `POST /api/admin/run-playwright` (`{ "date": "YYYY-MM-DD", "force": true }`).

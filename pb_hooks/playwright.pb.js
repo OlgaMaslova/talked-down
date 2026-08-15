@@ -1,11 +1,10 @@
 /// <reference path="../pb_data/types.d.ts" />
 
-// Master switch for the nightly generation pipeline. While false, neither the
-// nightly job nor the current-day recovery job generates or publishes anything;
-// already published scenarios stay live and the manual admin route still works.
-// Set to false (and redeploy) to pause daily generation; disable the schedule in
-// .github/workflows/nightly-watchdog.yml at the same time, or it alerts nightly.
-var PIPELINE_ENABLED = true;
+// NOTE: every handler below runs in its own isolated PocketBase JSVM runtime.
+// Nothing declared at this file scope is visible inside them — referencing such
+// a variable throws a ReferenceError that kills the handler with no output. All
+// shared state, including the PIPELINE_ENABLED kill switch, lives in
+// lib/playwright.js and is read through the require() inside each handler.
 
 // One-off production backfill. The cron is limited to July 21 and the helper
 // additionally requires the exact 2026 date, published scenario identity, and a
@@ -24,12 +23,12 @@ cronAdd("backfill_alien_souvenir_actor_portrait", "*/5 * 21 7 *", function() {
 });
 
 cronAdd("nightly_playwright", "0 2 * * *", function() {
-  if (!PIPELINE_ENABLED) {
+  var playwright = require(__hooks + "/lib/playwright.js");
+  if (!playwright.PIPELINE_ENABLED) {
     console.log("nightly_playwright skipped: pipeline disabled");
     return;
   }
 
-  var playwright = require(__hooks + "/lib/playwright.js");
   var targetDate = playwright.tomorrowUTC();
 
   // 1) Recap the prior (completed) UTC day — best effort, never blocks generation.
@@ -56,11 +55,11 @@ cronAdd("nightly_playwright", "0 2 * * *", function() {
 // no published scenario exists. The pipeline repeats the same guard before it
 // generates, so normal days remain a lightweight data-level no-op.
 cronAdd("recover_current_day_playwright", "7,22,37,52 * * * *", function() {
-  if (!PIPELINE_ENABLED) {
+  var playwright = require(__hooks + "/lib/playwright.js");
+  if (!playwright.PIPELINE_ENABLED) {
     return;
   }
 
-  var playwright = require(__hooks + "/lib/playwright.js");
   var targetDate = new Date().toISOString().slice(0, 10);
   var published;
 

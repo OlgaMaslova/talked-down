@@ -27,12 +27,28 @@ jobs:
         id: status
         run: |
           set -euo pipefail
-          BODY=$(curl -sS --max-time 30 https://sn-pb-repo-1292607600-93600e.fly.dev/api/pipeline/status || echo '{"ok":false,"error":"unreachable"}')
+          BODY=$(curl -sS --max-time 30 https://sn-pb-repo-1292607600-d50858.fly.dev/api/pipeline/status || echo '{"ok":false,"error":"unreachable"}')
           echo "body=$BODY" >> "$GITHUB_OUTPUT"
           echo "Pipeline status: $BODY"
           OK=$(echo "$BODY" | jq -r '.ok // false')
           TODAY_READY=$(echo "$BODY" | jq -r '.today_scenario_ready // false')
-          if [ "$OK" != "true" ] || [ "$TODAY_READY" != "true" ]; then
+          # Older builds have no build block; treat a missing flag as enabled.
+          # Not `// true`: jq's alternative operator also fires on a literal
+          # false, which is exactly the value this check exists to detect.
+          ENABLED=$(echo "$BODY" | jq -r '.build.pipeline_enabled | if . == null then true else . end')
+
+          # Players having no game today is always an alert, pause or not.
+          if [ "$TODAY_READY" != "true" ]; then
+            echo "No published scenario for today" >&2
+            exit 1
+          fi
+          # Generation deliberately paused (PIPELINE_ENABLED = false) with today
+          # still playable: expected, so stay quiet instead of alerting nightly.
+          if [ "$ENABLED" != "true" ]; then
+            echo "Generation is paused on the deployed build; skipping check."
+            exit 0
+          fi
+          if [ "$OK" != "true" ]; then
             echo "Nightly pipeline breakage detected" >&2
             exit 1
           fi

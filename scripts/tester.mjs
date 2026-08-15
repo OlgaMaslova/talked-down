@@ -11,7 +11,7 @@
 //
 // Usage: POCKETBASE_URL=https://... node scripts/tester.mjs
 
-const BASE = process.env.POCKETBASE_URL || "https://sn-pb-repo-1292607600-93600e.fly.dev";
+const BASE = process.env.POCKETBASE_URL || "https://sn-pb-repo-1292607600-d50858.fly.dev";
 
 async function api(path, body) {
   const res = await fetch(BASE + path, {

@@ -227,6 +227,22 @@ try {
 }
 check("new, truthful domain passes validation", validResult && validResult.secret && validResult.secret.domain === "sports", validResult);
 
+const repeatedFrameScenario = JSON.parse(JSON.stringify(validSportsScenario));
+repeatedFrameScenario.secret.frame = "buy";
+repeatedFrameScenario.secret.direction = "sell";
+repeatedFrameScenario.secret.opening_price = 300;
+repeatedFrameScenario.secret.fair_price = 250;
+repeatedFrameScenario.secret.floor_price = 200;
+repeatedFrameScenario.public.opening_message = "I can part with this training program for 300 crowns. Tell me why I should lower it.";
+repeatedFrameScenario.public.player_brief = "A stadium coach is selling a training program.\nYou are an independent trainer.\nGoal: buy the program for as little as possible. Opening ask: 300 crowns.";
+let repeatedFrameResult = null;
+try {
+  repeatedFrameResult = playwright.normalizeAndValidateGenerated(repeatedFrameScenario, recent);
+} catch (error) {
+  repeatedFrameResult = error.message;
+}
+check("a fresh scenario may repeat the most recent frame", repeatedFrameResult && repeatedFrameResult.secret && repeatedFrameResult.secret.frame === "buy", repeatedFrameResult);
+
 const conciseTitleScenario = JSON.parse(JSON.stringify(validSportsScenario));
 conciseTitleScenario.public.title = "Rush-made gown";
 let conciseTitleResult = null;
@@ -308,6 +324,27 @@ try {
   falseDomainError = error.message;
 }
 check("declared domain must match story text", falseDomainError.includes("secret.domain does not match the scenario text"), falseDomainError);
+
+// PocketBase executes every cron/route handler in its own isolated JSVM
+// runtime, so a handler cannot see variables declared at the top of its hook
+// file — the reference throws a ReferenceError and the handler dies silently.
+// A kill switch written that way once stopped nightly generation for two days
+// while looking exactly like an intentional pause, so guard the whole pattern:
+// hook files must keep shared state in lib/ and require() it inside handlers.
+import { readdirSync, readFileSync } from "node:fs";
+const hooksDir = join(here, "../pb_hooks");
+for (const file of readdirSync(hooksDir).filter((name) => name.endsWith(".pb.js"))) {
+  const source = readFileSync(join(hooksDir, file), "utf8");
+  const declarations = source
+    .split("\n")
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter(({ line }) => /^(var|let|const)\s/.test(line));
+  check(
+    `${file} declares no file-scope state (unreachable from handlers)`,
+    declarations.length === 0,
+    declarations.map(({ line, number }) => `${number}: ${line.trim()}`).join(" | ")
+  );
+}
 
 console.log(failures ? `\n${failures} FAILURES` : "\nall tests passed");
 process.exit(failures ? 1 : 0);
