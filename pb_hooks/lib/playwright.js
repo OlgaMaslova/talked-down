@@ -35,7 +35,7 @@ Generated scenario_secrets.secret_spec shape follows actor.pb.js:
 // runtime: a handler cannot see variables declared in the enclosing hook file,
 // and referencing one throws a ReferenceError that kills the handler. Handlers
 // read it through the module they already require() inside their own body.
-var PIPELINE_ENABLED = true;
+var PIPELINE_ENABLED = false;
 
 var PLAYWRIGHT_GENERATOR = "playwright";
 var MAX_FULL_CYCLES = 3;
