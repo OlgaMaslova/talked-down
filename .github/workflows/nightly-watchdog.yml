@@ -11,8 +11,13 @@
 name: nightly-watchdog
 
 on:
-  schedule:
-    - cron: "30 3 * * *" # 90 min after the 02:00 UTC pipeline run
+  # Nightly schedule paused 2026-09-09 while the generation pipeline is stopped.
+  # With generation off, days eventually have no published scenario, and the
+  # `today_scenario_ready` check alerts on that whether or not the pause is
+  # deliberate — so leaving this on would open an issue every night. Re-enable
+  # together with PIPELINE_ENABLED in pb_hooks/lib/playwright.js.
+  # schedule:
+  #   - cron: "30 3 * * *" # 90 min after the 02:00 UTC pipeline run
   workflow_dispatch: {}
 
 permissions:
